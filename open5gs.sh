@@ -435,6 +435,7 @@ cmd_provision() {
                 access_restriction_data: 32,
                 slice: [{
                     sst: ${SST},
+                    sd: '${SD}',
                     default_indicator: true,
                     session: [{
                         name: '${DNN}',
@@ -517,6 +518,7 @@ cmd_bulk_provision() {
                 access_restriction_data: 32,
                 slice: [{
                     sst: ${SST},
+                    sd: '${SD}',
                     default_indicator: true,
                     session: [{
                         name: '${DNN}',

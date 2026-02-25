@@ -107,6 +107,7 @@ provision_subscriber() {
                 access_restriction_data: 32,
                 slice: [{
                     sst: ${SST},
+                    sd: '${SD}',
                     default_indicator: true,
                     session: [{
                         name: '${DNN}',
@@ -158,6 +159,7 @@ provision_subscriber_multi_apn() {
                 access_restriction_data: 32,
                 slice: [{
                     sst: ${SST},
+                    sd: '${SD}',
                     default_indicator: true,
                     session: [
                         {
