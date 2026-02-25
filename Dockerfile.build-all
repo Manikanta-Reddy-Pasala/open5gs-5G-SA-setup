@@ -38,6 +38,79 @@ RUN git clone --depth 1 -b v2.7.5 https://github.com/open5gs/open5gs.git
 
 WORKDIR /src/open5gs
 
+# ── AMF fork: inject TCP health check server ──────────────
+# Copy new source files into the cloned tree
+COPY NFs/amf/amf-health.h /src/open5gs/src/amf/amf-health.h
+COPY NFs/amf/amf-health.c /src/open5gs/src/amf/amf-health.c
+
+# Patch the three existing AMF source files with minimal targeted changes.
+# Python3 is already installed (needed for meson).
+RUN python3 - <<'PYEOF'
+import re
+
+# ── 1. meson.build: add amf-health.c + threads dependency ──
+with open('/src/open5gs/src/amf/meson.build', 'r') as f:
+    s = f.read()
+# Insert amf-health.c just before amf-sm.c in the sources list
+s = s.replace('    amf-sm.c', '    amf-health.c\n    amf-sm.c', 1)
+# Add dependency('threads') for -lpthread
+s = s.replace(
+    'dependencies : [libmetrics_dep,',
+    'dependencies : [dependency(\'threads\'), libmetrics_dep,',
+    1)
+with open('/src/open5gs/src/amf/meson.build', 'w') as f:
+    f.write(s)
+
+# ── 2. init.c: add include + open/close calls ──────────────
+with open('/src/open5gs/src/amf/init.c', 'r') as f:
+    s = f.read()
+# Add include after the metrics.h include
+s = s.replace(
+    '#include "metrics.h"',
+    '#include "metrics.h"\n#include "amf-health.h"',
+    1)
+# Start health server just before ogs_thread_create
+s = s.replace(
+    '    thread = ogs_thread_create(amf_main, NULL);',
+    '    rv = amf_health_open();\n'
+    '    if (rv != OGS_OK) return rv;\n\n'
+    '    thread = ogs_thread_create(amf_main, NULL);',
+    1)
+# Close health server before ngap_close
+s = s.replace(
+    '    ngap_close();\n    amf_sbi_close();',
+    '    amf_health_close();\n    ngap_close();\n    amf_sbi_close();',
+    1)
+with open('/src/open5gs/src/amf/init.c', 'w') as f:
+    f.write(s)
+
+# ── 3. amf-sm.c: add include + registration hook ───────────
+with open('/src/open5gs/src/amf/amf-sm.c', 'r') as f:
+    s = f.read()
+# Add include after nas-security.h
+s = s.replace(
+    '#include "nas-security.h"',
+    '#include "nas-security.h"\n#include "amf-health.h"',
+    1)
+# In amf_state_operational OGS_FSM_ENTRY_SIG handler, add registration call.
+# The pattern is:  case OGS_FSM_ENTRY_SIG:\n        break;
+# We only want to replace the FIRST occurrence (amf_state_operational).
+s = s.replace(
+    '    case OGS_FSM_ENTRY_SIG:\n        break;',
+    '    case OGS_FSM_ENTRY_SIG:\n        amf_health_send_registration();\n        break;',
+    1)
+with open('/src/open5gs/src/amf/amf-sm.c', 'w') as f:
+    f.write(s)
+
+print("AMF health check patch applied successfully")
+PYEOF
+
+# Verify patches applied
+RUN grep -n "amf-health" /src/open5gs/src/amf/meson.build && \
+    grep -n "amf_health_open" /src/open5gs/src/amf/init.c && \
+    grep -n "amf_health_send_registration" /src/open5gs/src/amf/amf-sm.c && \
+    echo "All AMF patches verified"
+
 # Build with meson, install to /output
 # --libdir=lib / --bindir=bin: normalize paths so libs always land in /output/lib/
 # (without this, Ubuntu multiarch puts them in /output/lib/x86_64-linux-gnu/)
