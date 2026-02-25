@@ -1,0 +1,19 @@
+mcc: '001'
+mnc: '01'
+nci: '0x000000010'
+idLength: 32
+tac: 1
+
+linkIp: 0.0.0.0
+ngapIp: 0.0.0.0
+gtpIp: 0.0.0.0
+
+amfConfigs:
+  - address: open5gs-cp
+    port: 38412
+
+slices:
+  - sst: 1
+    sd: 0x111111
+
+ignoreStreamIds: true

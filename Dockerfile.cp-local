@@ -1,0 +1,44 @@
+# ============================================================
+# open5GS Control Plane Runtime (from locally-built binaries)
+# ============================================================
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgnutls30 libgcrypt20 libssl3 \
+    libidn12 libmongoc-1.0-0 libbson-1.0-0 \
+    libsctp1 libmicrohttpd12 \
+    libcurl4 libnghttp2-14 \
+    libyaml-0-2 libtalloc2 \
+    libmaxminddb0 libldns3 \
+    wget curl iproute2 iputils-ping net-tools tcpdump \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /open5gs
+
+# Copy all CP NF binaries
+COPY build-output/open5gs/bin/open5gs-nrfd  ./
+COPY build-output/open5gs/bin/open5gs-scpd  ./
+COPY build-output/open5gs/bin/open5gs-amfd  ./
+COPY build-output/open5gs/bin/open5gs-smfd  ./
+COPY build-output/open5gs/bin/open5gs-ausfd ./
+COPY build-output/open5gs/bin/open5gs-udmd  ./
+COPY build-output/open5gs/bin/open5gs-udrd  ./
+COPY build-output/open5gs/bin/open5gs-pcfd  ./
+COPY build-output/open5gs/bin/open5gs-nssfd ./
+COPY build-output/open5gs/bin/open5gs-bsfd  ./
+
+# Copy open5GS shared libraries
+COPY build-output/open5gs/lib/ /usr/local/lib/open5gs/
+RUN echo "/usr/local/lib/open5gs" > /etc/ld.so.conf.d/open5gs.conf && ldconfig
+
+# Copy startup script
+COPY consolidated/start-cp-nfs.sh ./start-cp-nfs.sh
+RUN chmod +x ./start-cp-nfs.sh ./open5gs-*
+
+RUN mkdir -p /var/log/open5gs /etc/open5gs
+
+EXPOSE 7777 7778 7780 7781 7782 7783 7784 7785 7786 7787 38412/sctp
+
+ENTRYPOINT ["./start-cp-nfs.sh"]

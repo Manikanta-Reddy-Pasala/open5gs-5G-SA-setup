@@ -1,0 +1,23 @@
+logger:
+  file:
+    path: /var/log/open5gs/upf.log
+  level: debug
+
+upf:
+  pfcp:
+    server:
+      - address: 0.0.0.0
+    client:
+      smf:
+        - address: open5gs-cp
+  gtpu:
+    server:
+      - address: 0.0.0.0
+  session:
+    - subnet: 10.45.0.0/16
+      gateway: 10.45.0.1
+      dnn: internet
+  metrics:
+    server:
+      - address: 0.0.0.0
+        port: 9092

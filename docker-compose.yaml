@@ -1,0 +1,157 @@
+# ============================================================
+# open5GS Portable Deployment - Built from Source
+# ============================================================
+# 5 containers: MongoDB, CP (all NFs), UPF, WebUI, UERANSIM
+#
+# Usage:
+#   ./open5gs.sh build          # Build all binaries from source
+#   ./open5gs.sh start          # Start with info-level logging
+#   ./open5gs.sh start --debug  # Start with debug-level logging
+#   ./open5gs.sh start --ueransim  # Include UERANSIM gNB
+# ============================================================
+
+services:
+
+  # ── Container 1: MongoDB (Database) ────────────────────────
+  open5gs-mongodb:
+    container_name: open5gs-mongodb
+    image: mongo:6.0
+    command: mongod --port 27017
+    expose:
+      - "27017"
+    volumes:
+      - dbdata:/data/db
+    networks:
+      open5gs-net:
+        aliases:
+          - db
+
+  # ── Container 2: ALL Control Plane NFs ─────────────────────
+  open5gs-cp:
+    container_name: open5gs-cp
+    image: open5gs-cp-local:v2.7.5
+    build:
+      context: .
+      dockerfile: Dockerfile.cp-local
+    volumes:
+      - ./${CONFIG_DIR:-config}/nrf.yaml:/etc/open5gs/nrf.yaml
+      - ./${CONFIG_DIR:-config}/scp.yaml:/etc/open5gs/scp.yaml
+      - ./${CONFIG_DIR:-config}/amf.yaml:/etc/open5gs/amf.yaml
+      - ./${CONFIG_DIR:-config}/smf.yaml:/etc/open5gs/smf.yaml
+      - ./${CONFIG_DIR:-config}/ausf.yaml:/etc/open5gs/ausf.yaml
+      - ./${CONFIG_DIR:-config}/udm.yaml:/etc/open5gs/udm.yaml
+      - ./${CONFIG_DIR:-config}/udr.yaml:/etc/open5gs/udr.yaml
+      - ./${CONFIG_DIR:-config}/pcf.yaml:/etc/open5gs/pcf.yaml
+      - ./${CONFIG_DIR:-config}/nssf.yaml:/etc/open5gs/nssf.yaml
+      - ./${CONFIG_DIR:-config}/bsf.yaml:/etc/open5gs/bsf.yaml
+      - ./logs/cp:/var/log/open5gs
+    environment:
+      DB_URI: mongodb://db/open5gs
+    ports:
+      - "38412:38412/sctp"
+    networks:
+      open5gs-net:
+        ipv4_address: 10.200.100.16
+        aliases:
+          - nrf.open5gs.org
+          - scp.open5gs.org
+          - amf.open5gs.org
+          - smf.open5gs.org
+          - ausf.open5gs.org
+          - udm.open5gs.org
+          - udr.open5gs.org
+          - pcf.open5gs.org
+          - nssf.open5gs.org
+          - bsf.open5gs.org
+    healthcheck:
+      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:7777/nnrf-nfm/v1/nf-instances"]
+      interval: 5s
+      timeout: 3s
+      start_period: 30s
+      retries: 15
+    depends_on:
+      open5gs-mongodb:
+        condition: service_started
+
+  # ── Container 3: UPF (User Plane) ──────────────────────────
+  open5gs-upf:
+    container_name: open5gs-upf
+    image: open5gs-upf-local:v2.7.5
+    build:
+      context: .
+      dockerfile: Dockerfile.upf-local
+    volumes:
+      - ./${CONFIG_DIR:-config}/upf.yaml:/etc/open5gs/upf.yaml
+      - ./logs/upf:/var/log/open5gs
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    devices:
+      - "/dev/net/tun"
+    networks:
+      open5gs-net:
+        ipv4_address: 10.200.100.17
+        aliases:
+          - upf.open5gs.org
+    depends_on:
+      open5gs-cp:
+        condition: service_healthy
+
+  # ── Container 4: WebUI (Subscriber Management) ─────────────
+  open5gs-webui:
+    container_name: open5gs-webui
+    image: open5gs-webui-local:v2.7.5
+    build:
+      context: .
+      dockerfile: Dockerfile.webui
+    environment:
+      DB_URI: mongodb://db/open5gs
+      NEXTAUTH_URL: http://localhost:9999
+      NEXTAUTH_SECRET: open5gs-secret-key
+    ports:
+      - "9999:9999"
+    networks:
+      open5gs-net:
+        aliases:
+          - webui.open5gs.org
+    depends_on:
+      open5gs-mongodb:
+        condition: service_started
+
+  # ── UERANSIM: gNB + UE Simulator (optional) ────────────────
+  ueransim:
+    container_name: open5gs-ueransim
+    image: open5gs-ueransim-local:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.ueransim-local
+    command: ./nr-gnb -c ./config/gnb.yaml
+    volumes:
+      - ./config/gnb.yaml:/ueransim/config/gnb.yaml
+      - ./config/ue.yaml:/ueransim/config/ue.yaml
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - "/dev/net/tun"
+    networks:
+      open5gs-net:
+        aliases:
+          - gnb.open5gs.org
+    depends_on:
+      open5gs-cp:
+        condition: service_healthy
+    profiles:
+      - ueransim
+
+networks:
+  open5gs-net:
+    name: open5gs-net
+    ipam:
+      driver: default
+      config:
+        - subnet: 10.200.100.0/24
+    driver_opts:
+      com.docker.network.bridge.name: br-open5gs
+
+volumes:
+  dbdata:

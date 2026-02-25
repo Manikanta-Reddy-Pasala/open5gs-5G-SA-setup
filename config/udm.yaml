@@ -1,0 +1,13 @@
+logger:
+  file:
+    path: /var/log/open5gs/udm.log
+  level: info
+
+udm:
+  sbi:
+    server:
+      - address: 0.0.0.0
+        port: 7785
+    client:
+      scp:
+        - uri: http://127.0.0.1:7778

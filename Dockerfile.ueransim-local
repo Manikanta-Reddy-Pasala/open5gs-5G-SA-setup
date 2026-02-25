@@ -1,0 +1,26 @@
+# ============================================================
+# UERANSIM Runtime (from locally-built binaries)
+# ============================================================
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libsctp1 lksctp-tools \
+    iproute2 iputils-ping net-tools \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /ueransim
+
+COPY build-output/ueransim/nr-gnb   ./
+COPY build-output/ueransim/nr-ue    ./
+COPY build-output/ueransim/nr-cli   ./
+COPY build-output/ueransim/binder/  ./binder/
+
+RUN chmod +x ./nr-gnb ./nr-ue ./nr-cli
+
+RUN mkdir -p ./config
+
+EXPOSE 38412/sctp
+
+CMD ["./nr-gnb", "-c", "./config/gnb.yaml"]

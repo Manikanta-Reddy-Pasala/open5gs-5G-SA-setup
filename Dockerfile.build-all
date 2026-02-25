@@ -1,0 +1,93 @@
+# ============================================================
+# Universal Source Builder for open5GS + UERANSIM
+# ============================================================
+# Builds open5GS CP NFs, UPF, and UERANSIM from source.
+#
+# Build:
+#   docker build -f Dockerfile.build-all -t open5gs-builder:v2.7.5 .
+#
+# Extract binaries:
+#   docker run --rm -v $(pwd)/build-output:/export open5gs-builder:v2.7.5
+# ============================================================
+
+# ── Stage 1: Build open5GS from source ────────────────────────
+FROM ubuntu:22.04 AS open5gs-builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git cmake make gcc g++ \
+    python3-pip python3-setuptools python3-wheel \
+    flex bison \
+    libgnutls28-dev libgcrypt-dev libssl-dev \
+    libidn11-dev libmongoc-dev libbson-dev \
+    libsctp-dev libmicrohttpd-dev \
+    libcurl4-gnutls-dev libnghttp2-dev \
+    libyaml-dev libtalloc-dev \
+    libmaxminddb-dev libldns-dev \
+    iproute2 ca-certificates wget pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install latest meson (Ubuntu 22.04 ships 0.61.2, need >= 0.61.4)
+RUN pip3 install --upgrade meson ninja
+
+WORKDIR /src
+
+# Clone open5GS v2.7.5
+RUN git clone --depth 1 -b v2.7.5 https://github.com/open5gs/open5gs.git
+
+WORKDIR /src/open5gs
+
+# Build with meson, install to /output
+RUN meson build --prefix=/output \
+      -Dc_args="-O2" \
+      --wrap-mode=nodownload && \
+    ninja -C build && \
+    ninja -C build install
+
+# ── Stage 2: Build UERANSIM from source ───────────────────────
+FROM ubuntu:22.04 AS ueransim-builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    git build-essential gcc g++ libsctp-dev lksctp-tools \
+    iproute2 make wget ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN ARCH=$(uname -m) && \
+    mkdir /cmake && cd /cmake && \
+    wget -q "https://github.com/Kitware/CMake/releases/download/v3.28.3/cmake-3.28.3-linux-${ARCH}.sh" -O cmake_installer.sh && \
+    chmod +x cmake_installer.sh && \
+    ./cmake_installer.sh --skip-license --prefix=/usr/local && \
+    rm cmake_installer.sh
+
+RUN git clone -b master --depth 1 https://github.com/aligungr/UERANSIM && \
+    cd UERANSIM && \
+    make -j$(nproc)
+
+# ── Stage 3: Export all binaries ──────────────────────────────
+FROM ubuntu:22.04 AS export
+
+WORKDIR /output
+
+COPY --from=open5gs-builder /output/bin/ ./open5gs/bin/
+COPY --from=open5gs-builder /output/lib/ ./open5gs/lib/
+
+COPY --from=ueransim-builder /UERANSIM/build/nr-gnb  ./ueransim/
+COPY --from=ueransim-builder /UERANSIM/build/nr-ue   ./ueransim/
+COPY --from=ueransim-builder /UERANSIM/build/nr-cli  ./ueransim/
+COPY --from=ueransim-builder /UERANSIM/build/nr-binder ./ueransim/binder/
+COPY --from=ueransim-builder /UERANSIM/build/libdevbnd.so ./ueransim/binder/
+
+RUN echo "=== open5GS Portable Build ===" > /output/BUILD_MANIFEST.txt && \
+    echo "Built at: $(date -u)" >> /output/BUILD_MANIFEST.txt && \
+    echo "" >> /output/BUILD_MANIFEST.txt && \
+    echo "open5GS binaries:" >> /output/BUILD_MANIFEST.txt && \
+    ls -la /output/open5gs/bin/ >> /output/BUILD_MANIFEST.txt && \
+    echo "" >> /output/BUILD_MANIFEST.txt && \
+    echo "UERANSIM:" >> /output/BUILD_MANIFEST.txt && \
+    ls -la /output/ueransim/ >> /output/BUILD_MANIFEST.txt
+
+CMD ["cp", "-r", "/output/.", "/export/"]

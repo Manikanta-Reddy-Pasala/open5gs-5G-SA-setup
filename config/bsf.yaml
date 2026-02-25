@@ -1,0 +1,15 @@
+db_uri: mongodb://db/open5gs
+
+logger:
+  file:
+    path: /var/log/open5gs/bsf.log
+  level: info
+
+bsf:
+  sbi:
+    server:
+      - address: 0.0.0.0
+        port: 7787
+    client:
+      scp:
+        - uri: http://127.0.0.1:7778

@@ -1,0 +1,29 @@
+# ============================================================
+# open5GS WebUI (built from source using Node.js)
+# ============================================================
+FROM node:18-alpine AS builder
+
+RUN apk add --no-cache git
+
+RUN git clone --depth 1 -b v2.7.5 https://github.com/open5gs/open5gs.git /open5gs
+
+WORKDIR /open5gs/webui
+
+RUN npm ci --legacy-peer-deps && \
+    npm run build
+
+# ── Runtime ────────────────────────────────────────────────
+FROM node:18-alpine
+
+WORKDIR /open5gs/webui
+
+COPY --from=builder /open5gs/webui/.next ./.next
+COPY --from=builder /open5gs/webui/public ./public
+COPY --from=builder /open5gs/webui/node_modules ./node_modules
+COPY --from=builder /open5gs/webui/package.json ./package.json
+COPY --from=builder /open5gs/webui/server ./server 2>/dev/null || true
+
+ENV PORT=9999
+EXPOSE 9999
+
+CMD ["node", "node_modules/.bin/next", "start", "-p", "9999"]

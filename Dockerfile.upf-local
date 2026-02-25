@@ -1,0 +1,29 @@
+# ============================================================
+# open5GS UPF Runtime (from locally-built binaries)
+# ============================================================
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgnutls30 libgcrypt20 libssl3 \
+    libidn12 libmongoc-1.0-0 libbson-1.0-0 \
+    libsctp1 libmicrohttpd12 \
+    libcurl4 libnghttp2-14 \
+    libyaml-0-2 libtalloc2 \
+    libmaxminddb0 libldns3 \
+    iproute2 iptables iputils-ping tcpdump \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /open5gs
+
+COPY build-output/open5gs/bin/open5gs-upfd ./
+COPY build-output/open5gs/lib/ /usr/local/lib/open5gs/
+RUN echo "/usr/local/lib/open5gs" > /etc/ld.so.conf.d/open5gs.conf && ldconfig
+
+COPY consolidated/start-upf.sh ./start-upf.sh
+RUN chmod +x ./start-upf.sh ./open5gs-upfd
+
+RUN mkdir -p /var/log/open5gs /etc/open5gs
+
+ENTRYPOINT ["./start-upf.sh"]
