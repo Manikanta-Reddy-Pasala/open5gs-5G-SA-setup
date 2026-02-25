@@ -27,9 +27,8 @@ wait_port() {
 wait_mongo() {
     local max=60 waited=0
     log "Waiting for MongoDB..."
-    while ! wget -q --spider "http://db:27017" 2>/dev/null; do
-        # Try TCP ping instead
-        if nc -z db 27017 2>/dev/null; then break; fi
+    # Use bash /dev/tcp for a real TCP ping — avoids wget hanging on non-HTTP sockets
+    while ! (echo > /dev/tcp/db/27017) 2>/dev/null; do
         sleep 2; waited=$((waited+2))
         [ $waited -ge $max ] && { log "WARNING: MongoDB not ready after ${max}s"; break; }
     done

@@ -18,12 +18,14 @@ FROM node:18-alpine
 WORKDIR /open5gs/webui
 
 COPY --from=builder /open5gs/webui/.next ./.next
-COPY --from=builder /open5gs/webui/public ./public
 COPY --from=builder /open5gs/webui/node_modules ./node_modules
 COPY --from=builder /open5gs/webui/package.json ./package.json
-COPY --from=builder /open5gs/webui/server ./server 2>/dev/null || true
+
+# public/ may or may not exist in this version — create it if absent
+RUN --mount=type=bind,from=builder,source=/open5gs/webui,target=/webui-src \
+    if [ -d /webui-src/public ]; then cp -r /webui-src/public ./public; else mkdir -p ./public; fi
 
 ENV PORT=9999
 EXPOSE 9999
 
-CMD ["node", "node_modules/.bin/next", "start", "-p", "9999"]
+CMD ["node_modules/.bin/next", "start", "-p", "9999"]

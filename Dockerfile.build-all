@@ -22,7 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgnutls28-dev libgcrypt-dev libssl-dev \
     libidn11-dev libmongoc-dev libbson-dev \
     libsctp-dev libmicrohttpd-dev \
-    libcurl4-gnutls-dev libnghttp2-dev \
+    libcurl4-openssl-dev libnghttp2-dev \
     libyaml-dev libtalloc-dev \
     libmaxminddb-dev libldns-dev \
     iproute2 ca-certificates wget pkg-config \
@@ -39,10 +39,13 @@ RUN git clone --depth 1 -b v2.7.5 https://github.com/open5gs/open5gs.git
 WORKDIR /src/open5gs
 
 # Build with meson, install to /output
-RUN meson build --prefix=/output \
-      -Dc_args="-O2" \
-      --wrap-mode=nodownload && \
-    ninja -C build && \
+# --libdir=lib / --bindir=bin: normalize paths so libs always land in /output/lib/
+# (without this, Ubuntu multiarch puts them in /output/lib/x86_64-linux-gnu/)
+RUN meson setup build --prefix=/output \
+      --libdir=lib \
+      --bindir=bin \
+      -Dc_args="-O2" && \
+    ninja -C build -j$(nproc) && \
     ninja -C build install
 
 # ── Stage 2: Build UERANSIM from source ───────────────────────

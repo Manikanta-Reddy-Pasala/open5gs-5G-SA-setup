@@ -64,7 +64,7 @@ services:
           - nssf.open5gs.org
           - bsf.open5gs.org
     healthcheck:
-      test: ["CMD", "wget", "-qO", "/dev/null", "http://127.0.0.1:7777/nnrf-nfm/v1/nf-instances"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/7777 && echo ok"]
       interval: 5s
       timeout: 3s
       start_period: 30s

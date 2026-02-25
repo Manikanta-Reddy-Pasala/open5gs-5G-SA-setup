@@ -1,7 +1,7 @@
 logger:
   file:
     path: /var/log/open5gs/smf.log
-  level: info
+  level: debug
 
 smf:
   sbi:
@@ -16,8 +16,11 @@ smf:
       - address: 0.0.0.0
     client:
       upf:
-        - address: open5gs-upf
+        - address: 10.200.100.17
   gtpc:
+    server:
+      - address: 0.0.0.0
+  gtpu:
     server:
       - address: 0.0.0.0
   metrics:
@@ -27,7 +30,6 @@ smf:
   session:
     - subnet: 10.45.0.0/16
       gateway: 10.45.0.1
-      dnn: internet
   dns:
     - 8.8.8.8
     - 8.8.4.4
@@ -35,5 +37,5 @@ smf:
   info:
     - s_nssai:
         - sst: 1
-      dnn:
-        - internet
+          dnn:
+            - internet

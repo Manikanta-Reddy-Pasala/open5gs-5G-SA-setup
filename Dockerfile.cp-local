@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libcurl4 libnghttp2-14 \
     libyaml-0-2 libtalloc2 \
     libmaxminddb0 libldns3 \
-    wget curl iproute2 iputils-ping net-tools tcpdump \
+    wget iproute2 iputils-ping net-tools tcpdump \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /open5gs
@@ -29,9 +29,9 @@ COPY build-output/open5gs/bin/open5gs-pcfd  ./
 COPY build-output/open5gs/bin/open5gs-nssfd ./
 COPY build-output/open5gs/bin/open5gs-bsfd  ./
 
-# Copy open5GS shared libraries
-COPY build-output/open5gs/lib/ /usr/local/lib/open5gs/
-RUN echo "/usr/local/lib/open5gs" > /etc/ld.so.conf.d/open5gs.conf && ldconfig
+# Copy open5GS shared libraries directly to /usr/local/lib/ (standard ldconfig path)
+COPY build-output/open5gs/lib/ /usr/local/lib/
+RUN ldconfig
 
 # Copy startup script
 COPY consolidated/start-cp-nfs.sh ./start-cp-nfs.sh

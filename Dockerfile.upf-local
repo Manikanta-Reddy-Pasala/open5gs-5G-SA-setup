@@ -18,8 +18,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /open5gs
 
 COPY build-output/open5gs/bin/open5gs-upfd ./
-COPY build-output/open5gs/lib/ /usr/local/lib/open5gs/
-RUN echo "/usr/local/lib/open5gs" > /etc/ld.so.conf.d/open5gs.conf && ldconfig
+COPY build-output/open5gs/lib/ /usr/local/lib/
+RUN ldconfig
 
 COPY consolidated/start-upf.sh ./start-upf.sh
 RUN chmod +x ./start-upf.sh ./open5gs-upfd
