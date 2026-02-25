@@ -487,7 +487,82 @@ open5gs-5G-SA-setup/
 │   ├── open5gs/bin/            # All open5GS NF binaries (AMF includes health check)
 │   ├── open5gs/lib/            # Shared libraries
 │   └── ueransim/               # nr-gnb, nr-ue, nr-cli
+├── tests/                      # Automated test suite
+│   ├── common.sh               # Shared helpers (provisioning, UERANSIM, PLMN detection)
+│   ├── run_all.sh              # Test runner (all or specific TCs)
+│   ├── tc01_parallel_registration.sh
+│   ├── tc02_crash_recovery.sh
+│   ├── tc03_multi_apn.sh
+│   ├── tc04_multi_ue_deregistration.sh
+│   ├── tc05_paging_idle_ue.sh
+│   ├── tc06_ue_context_release.sh
+│   ├── tc07_ran_config_update.sh
+│   ├── tc08_ng_reset.sh
+│   ├── tc09_amf_health_check.sh
+│   ├── tc10_memory_leak.sh
+│   ├── logs/                   # Per-run test logs (git-ignored)
+│   └── README.md               # Test suite documentation
 └── logs/                       # Runtime logs (git-ignored)
     ├── cp/                     # Per-NF log files
     └── upf/                    # UPF log file
 ```
+
+---
+
+## Test Suite
+
+A full automated test suite is included in `tests/`. Tests run against the live Docker deployment and cover registration, recovery, multi-UE, multi-APN, paging, NG Reset, and the custom AMF health check.
+
+### Quick Start
+
+```bash
+# Ensure core + UERANSIM are running first
+./open5gs.sh start --ueransim
+./open5gs.sh provision
+
+# Run all 10 tests
+cd tests && ./run_all.sh
+
+# Run specific tests
+./run_all.sh 1 4 9
+
+# Run a single test directly
+bash tests/tc09_amf_health_check.sh
+
+# List all tests
+./run_all.sh --list
+```
+
+### Test Cases at a Glance
+
+| # | Test | What it verifies |
+|---|------|-----------------|
+| TC01 | Parallel Registration | N UEs register simultaneously |
+| TC02 | Crash Recovery | Core recovers after UPF/CP/MongoDB restart |
+| TC03 | Multi-APN | UE holds sessions on both `internet` + `ims` DNNs |
+| TC04 | Multi-UE Deregistration | N UEs deregister simultaneously |
+| TC05 | Paging / Idle UE | AMF pages idle UE on downlink data |
+| TC06 | UE Context Release | Ungraceful (RLF) + graceful deregister |
+| TC07 | RAN Config Update | TAC change: gNB reconnects with new TAC |
+| TC08 | NG Reset | gNB graceful restart + forced kill recovery |
+| **TC09** | **AMF Health Check** | **TCP port 50051 returns SERVING (0x020801)** |
+| TC10 | Memory / Stability | Register/deregister cycles, memory growth < 20% |
+
+> **TC09 is unique to this deployment** — it validates the custom AMF fork's TCP health check server. See [AMF Custom Fork](#amf-custom-fork--tcp-health-check--registration) for details.
+
+Test logs are saved to `tests/logs/` with timestamps. See [`tests/README.md`](tests/README.md) for full documentation.
+
+---
+
+## Comparison: open5GS vs free5GC
+
+| Feature | open5GS (this repo) | free5GC |
+|---------|---------------------|---------|
+| Language | C (meson/ninja) | Go |
+| Version | v2.7.5 | v4.x |
+| Containers | 5 (MongoDB, CP, UPF, WebUI, UERANSIM) | 5 |
+| Provisioning | Direct MongoDB (`mongosh`) | WebUI REST API |
+| Slice (default) | SST=1, SD=111111 | SST=3, SD=198153 |
+| WebUI | Port 9999, admin/1423 | Port 4000, admin/free5gc |
+| AMF Health Check | ✅ Port 50051 (TCP, custom fork) | ✅ Port 50051 (gRPC, custom fork) |
+| Test suite | ✅ 10 TCs (`tests/`) | ✅ 10 TCs (`tests/`) |
