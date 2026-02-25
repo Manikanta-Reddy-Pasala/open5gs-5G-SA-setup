@@ -21,6 +21,7 @@ A fully self-contained 5G Standalone (SA) core network built from source using [
   │ (MongoDB)    │      │  UDR:7786  BSF:7787                           │
   └──────────────┘      │                                               │
                         │  NGAP/SCTP: 38412 (to gNB)                  │
+                        │  TCP Health: 50051  ← forked AMF             │
                         └──────────────┬──────────────────────────────┘
                                        │ PFCP
                         ┌──────────────▼──────────────────────────────┐
@@ -141,6 +142,7 @@ All containers share the `open5gs-net` bridge network (`10.200.100.0/24`, bridge
 | UDM | 7785 | Unified Data Management |
 | UDR | 7786 | Unified Data Repository |
 | BSF | 7787 | Binding Support Function |
+| **AMF Health** | **50051** | **TCP health check (custom fork, see below)** |
 | Metrics | 9090-9093 | Prometheus metrics (AMF/SMF/PCF/UPF) |
 
 ---
@@ -239,6 +241,98 @@ build-output/
 
 ---
 
+## AMF Custom Fork — TCP Health Check & Registration
+
+This repo ships a **forked open5GS AMF** with a TCP health check server and registration client grafted in, wire-format-compatible with the [free5GC custom AMF](../free5gc-5G-SA-setup/NFs/amf/).
+
+### How it works
+
+The fork lives entirely in `NFs/amf/amf-health.c` + `amf-health.h`. The `Dockerfile.build-all` copies these files into the cloned open5GS source tree at build time and patches three existing files via a Python script before the meson/ninja build runs. No upstream files are stored in this repo — only the diff (patch script + new files).
+
+### TCP Health Check Server (port 50051)
+
+Identical wire format to the free5GC AMF health check endpoint:
+
+```
+Wire protocol (both directions):
+  [varint: N][N bytes: proto-encoded message]
+
+HealthCheckResponse { status: SERVING  } → 0x02 0x08 0x01
+HealthCheckResponse { status: NOT_SERVING } → 0x02 0x08 0x02
+```
+
+- Plain TCP probes (kubernetes liveness, load balancers) that send nothing receive `SERVING` after a 500 ms timeout — no request payload required
+- Clients may optionally send a `HealthCheckRequest { service: "..." }` before reading the response
+
+**Test:**
+```bash
+# Plain TCP probe — expect 020801 (SERVING)
+python3 -c "
+import socket
+s = socket.socket()
+s.connect(('<host>', 50051))
+print(s.recv(64).hex())   # → 020801
+s.close()
+"
+
+# Or with netcat
+echo | nc <host> 50051 | xxd | head -1
+```
+
+### Registration Client
+
+On AMF startup (`amf_state_operational` FSM entry), the AMF optionally sends a `RegisterRequest` proto to a configured registration server:
+
+```
+RegisterRequest {
+  node_type = AMF (13)
+  ip        = <AMF_GRPC_ADVERTISE_IP>
+  port      = <AMF_GRPC_PORT>
+}
+```
+
+The call is fire-and-forget (detached thread) — it never blocks AMF boot. The server may reply with an optional `RegisterResponse { success, message }`.
+
+### Configuration
+
+All settings are env vars read at startup. Set them in `docker-compose.yaml` under `open5gs-cp.environment`:
+
+| Env var | Default | Description |
+|---|---|---|
+| `AMF_GRPC_ENABLE` | `1` | `1` = start health server, `0` = disable |
+| `AMF_GRPC_PORT` | `50051` | TCP port to bind |
+| `AMF_GRPC_BIND_ADDR` | `0.0.0.0` | IPv4 address to bind |
+| `AMF_GRPC_ADVERTISE_IP` | same as BIND_ADDR | IP advertised in RegisterRequest |
+| `AMF_GRPC_REGISTRATION_ENABLE` | `0` | `1` = send RegisterRequest on startup |
+| `AMF_GRPC_REGISTRATION_SERVER_IP` | _(unset)_ | Registration server IP |
+| `AMF_GRPC_REGISTRATION_SERVER_PORT` | _(unset)_ | Registration server TCP port |
+
+**Example — enable registration:**
+```yaml
+# docker-compose.yaml, under open5gs-cp environment:
+AMF_GRPC_REGISTRATION_ENABLE: "1"
+AMF_GRPC_REGISTRATION_SERVER_IP: "192.168.1.100"
+AMF_GRPC_REGISTRATION_SERVER_PORT: "9090"
+```
+
+### Fork structure
+
+```
+NFs/amf/
+├── amf-health.h     # Public API (amf_health_open/close/send_registration)
+└── amf-health.c     # Full implementation (TCP server + registration client)
+```
+
+Patches applied by `Dockerfile.build-all` at build time:
+
+| File | Change |
+|---|---|
+| `src/amf/meson.build` | Add `amf-health.c` to sources + `dependency('threads')` |
+| `src/amf/init.c` | Call `amf_health_open()` after `ngap_open()`; `amf_health_close()` in terminate |
+| `src/amf/amf-sm.c` | Call `amf_health_send_registration()` in `amf_state_operational` `OGS_FSM_ENTRY_SIG` |
+
+---
+
 ## Comparison: open5GS vs free5GC
 
 | Feature | open5GS | free5GC |
@@ -264,7 +358,7 @@ build-output/
 | Docker network | 10.200.100.0/24 | 10.100.200.0/24 |
 | CP IP | 10.200.100.16 | 10.100.200.16 |
 | UPF IP | 10.200.100.17 | 10.100.200.17 |
-| Health check | NRF HTTP API | AMF TCP/gRPC port 50051 |
+| Health check | AMF TCP port 50051 (forked) | AMF TCP port 50051 (forked) |
 | NGAP port | 38412 | 38412 |
 | WebUI port | 9999 | 5000 |
 
@@ -370,11 +464,15 @@ docker exec open5gs-webui nc -z db 27017 && echo "DB OK"
 open5gs-5G-SA-setup/
 ├── open5gs.sh                  # Main management script
 ├── docker-compose.yaml         # Service definitions
-├── Dockerfile.build-all        # Multi-stage source builder
+├── Dockerfile.build-all        # Multi-stage source builder (applies AMF fork patch)
 ├── Dockerfile.cp-local         # CP runtime image
 ├── Dockerfile.upf-local        # UPF runtime image
 ├── Dockerfile.webui            # WebUI image (Node.js)
 ├── Dockerfile.ueransim-local   # UERANSIM runtime image
+├── NFs/
+│   └── amf/
+│       ├── amf-health.h        # AMF fork: TCP health check API header
+│       └── amf-health.c        # AMF fork: TCP health server + registration client
 ├── consolidated/
 │   ├── start-cp-nfs.sh         # CP startup script (all 10 NFs)
 │   └── start-upf.sh            # UPF startup + TUN setup
@@ -386,7 +484,7 @@ open5gs-5G-SA-setup/
 ├── config-debug/               # Debug-level configs (--debug flag)
 │   └── (same files, level: debug)
 ├── build-output/               # Generated by build (git-ignored)
-│   ├── open5gs/bin/            # All open5GS NF binaries
+│   ├── open5gs/bin/            # All open5GS NF binaries (AMF includes health check)
 │   ├── open5gs/lib/            # Shared libraries
 │   └── ueransim/               # nr-gnb, nr-ue, nr-cli
 └── logs/                       # Runtime logs (git-ignored)
