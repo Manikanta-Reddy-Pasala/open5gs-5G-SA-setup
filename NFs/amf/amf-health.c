@@ -17,6 +17,7 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 /* =========================================================
  * Protobuf varint + delimited-message helpers
@@ -88,15 +89,12 @@ static int write_delimited(int fd, const uint8_t *data, int data_len)
  * HealthCheckResponse wire encoding
  *
  * Proto:   message HealthCheckResponse { ServingStatus status = 1; }
- * SERVING     field 1 varint 1 → bytes { 0x08, 0x01 }
- * NOT_SERVING field 1 varint 2 → bytes { 0x08, 0x02 }
+ * SERVING  → field 1 varint 1 → bytes { 0x08, 0x01 }
  *
  * On the wire (varint-length-prefixed):
- *   SERVING     → { 0x02, 0x08, 0x01 }
- *   NOT_SERVING → { 0x02, 0x08, 0x02 }
+ *   SERVING → { 0x02, 0x08, 0x01 }
  * ========================================================= */
-static const uint8_t HEALTH_RESP_SERVING[2]     = { 0x08, 0x01 };
-static const uint8_t HEALTH_RESP_NOT_SERVING[2] = { 0x08, 0x02 };
+static const uint8_t HEALTH_RESP_SERVING[2] = { 0x08, 0x01 };
 #define HEALTH_RESP_LEN 2
 
 /* =========================================================
@@ -124,7 +122,9 @@ static void handle_connection(int cfd)
     /* Give the client 500 ms to send a HealthCheckRequest.
      * A plain TCP probe (k8s liveness, load-balancers) that sends nothing
      * will still receive a SERVING response once the deadline fires. */
-    struct timeval tv = { .tv_sec = 0, .tv_usec = 500000 };
+    struct timeval tv;
+    tv.tv_sec  = 0;
+    tv.tv_usec = 500000;
     setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
     uint8_t req_buf[64];
@@ -132,7 +132,9 @@ static void handle_connection(int cfd)
     read_delimited(cfd, req_buf, (int)sizeof(req_buf));
 
     /* Clear the read deadline before writing */
-    struct timeval tv_zero = { 0, 0 };
+    struct timeval tv_zero;
+    tv_zero.tv_sec  = 0;
+    tv_zero.tv_usec = 0;
     setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &tv_zero, sizeof(tv_zero));
 
     write_delimited(cfd, HEALTH_RESP_SERVING, HEALTH_RESP_LEN);
@@ -173,6 +175,9 @@ static void *health_server_loop(void *arg)
 int amf_health_open(void)
 {
     const char *env;
+    int port_fd;
+    int opt;
+    struct sockaddr_in addr;
 
     /* Read config from environment */
     env = getenv("AMF_GRPC_ENABLE");
@@ -187,20 +192,21 @@ int amf_health_open(void)
 
     env = getenv("AMF_GRPC_BIND_ADDR");
     if (env && strlen(env) > 0)
-        strncpy(g_bind_addr, env, sizeof(g_bind_addr) - 1);
+        snprintf(g_bind_addr, sizeof(g_bind_addr), "%s", env);
 
     env = getenv("AMF_GRPC_ADVERTISE_IP");
     if (env && strlen(env) > 0)
-        strncpy(g_advertise_ip, env, sizeof(g_advertise_ip) - 1);
+        snprintf(g_advertise_ip, sizeof(g_advertise_ip), "%s", env);
     else
-        strncpy(g_advertise_ip, g_bind_addr, sizeof(g_advertise_ip) - 1);
+        snprintf(g_advertise_ip, sizeof(g_advertise_ip), "%s", g_bind_addr);
 
     env = getenv("AMF_GRPC_REGISTRATION_ENABLE");
     g_reg_enable = (env && strcmp(env, "1") == 0) ? 1 : 0;
 
     if (g_reg_enable) {
         env = getenv("AMF_GRPC_REGISTRATION_SERVER_IP");
-        if (env) strncpy(g_reg_server_ip, env, sizeof(g_reg_server_ip) - 1);
+        if (env)
+            snprintf(g_reg_server_ip, sizeof(g_reg_server_ip), "%s", env);
 
         env = getenv("AMF_GRPC_REGISTRATION_SERVER_PORT");
         if (env && atoi(env) > 0)
@@ -208,37 +214,36 @@ int amf_health_open(void)
     }
 
     /* Create listening socket */
-    server_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (server_fd < 0) {
+    port_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (port_fd < 0) {
         ogs_error("[AMF-Health] socket() failed: %s", strerror(errno));
         return OGS_ERROR;
     }
 
-    int opt = 1;
-    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    opt = 1;
+    setsockopt(port_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
-    struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_port   = htons(g_port);
     inet_pton(AF_INET, g_bind_addr, &addr.sin_addr);
 
-    if (bind(server_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+    if (bind(port_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
         ogs_error("[AMF-Health] bind(%s:%u) failed: %s",
                   g_bind_addr, (unsigned)g_port, strerror(errno));
-        close(server_fd);
-        server_fd = -1;
+        close(port_fd);
         return OGS_ERROR;
     }
 
-    if (listen(server_fd, 16) < 0) {
+    if (listen(port_fd, 16) < 0) {
         ogs_error("[AMF-Health] listen() failed: %s", strerror(errno));
-        close(server_fd);
-        server_fd = -1;
+        close(port_fd);
         return OGS_ERROR;
     }
 
+    server_fd = port_fd;
     server_running = 1;
+
     if (pthread_create(&server_thread, NULL, health_server_loop, NULL) != 0) {
         ogs_error("[AMF-Health] pthread_create() failed: %s", strerror(errno));
         server_running = 0;
@@ -280,100 +285,106 @@ void amf_health_close(void)
 
 static void *do_registration(void *arg)
 {
-    (void)arg;
-
-    /* Build RegisterRequest proto */
     uint8_t proto[256];
     int offset = 0;
     int vn;
+    int sfd;
+    struct sockaddr_in srv;
+    struct timeval tv;
+    uint8_t resp_buf[128];
+    int resp_len;
+
+    (void)arg;
+
+    /* Build RegisterRequest proto */
 
     /* field 1: node_type = AMF = 13 */
     proto[offset++] = 0x08;
     proto[offset++] = 13;
 
     /* field 2: ip (string, length-delimited) */
-    int ip_len = (int)strlen(g_advertise_ip);
-    proto[offset++] = 0x12;
-    vn = varint_encode((uint64_t)ip_len, proto + offset,
-                       (int)sizeof(proto) - offset);
-    if (vn < 0) goto done;
-    offset += vn;
-    memcpy(proto + offset, g_advertise_ip, (size_t)ip_len);
-    offset += ip_len;
+    {
+        int ip_len = (int)strlen(g_advertise_ip);
+        proto[offset++] = 0x12;
+        vn = varint_encode((uint64_t)ip_len, proto + offset,
+                           (int)sizeof(proto) - offset);
+        if (vn < 0) return NULL;
+        offset += vn;
+        memcpy(proto + offset, g_advertise_ip, (size_t)ip_len);
+        offset += ip_len;
+    }
 
     /* field 3: port (varint) */
     proto[offset++] = 0x18;
     vn = varint_encode((uint64_t)g_port, proto + offset,
                        (int)sizeof(proto) - offset);
-    if (vn < 0) goto done;
+    if (vn < 0) return NULL;
     offset += vn;
 
-    {
-        /* Dial the registration server */
-        struct sockaddr_in srv;
-        memset(&srv, 0, sizeof(srv));
-        srv.sin_family = AF_INET;
-        srv.sin_port   = htons(g_reg_server_port);
-        if (inet_pton(AF_INET, g_reg_server_ip, &srv.sin_addr) <= 0) {
-            ogs_warn("[AMF-Health] Registration: invalid server IP '%s'",
-                     g_reg_server_ip);
-            goto done;
-        }
-
-        int sfd = socket(AF_INET, SOCK_STREAM, 0);
-        if (sfd < 0) {
-            ogs_warn("[AMF-Health] Registration: socket() failed: %s",
-                     strerror(errno));
-            goto done;
-        }
-
-        /* 5-second connect + I/O timeout */
-        struct timeval tv = { .tv_sec = 5, .tv_usec = 0 };
-        setsockopt(sfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-        setsockopt(sfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-
-        if (connect(sfd, (struct sockaddr *)&srv, sizeof(srv)) < 0) {
-            ogs_warn("[AMF-Health] Registration: connect(%s:%u) failed: %s",
-                     g_reg_server_ip, (unsigned)g_reg_server_port,
-                     strerror(errno));
-            close(sfd);
-            goto done;
-        }
-
-        /* Send RegisterRequest */
-        if (write_delimited(sfd, proto, offset) < 0) {
-            ogs_warn("[AMF-Health] Registration: send failed: %s",
-                     strerror(errno));
-            close(sfd);
-            goto done;
-        }
-
-        ogs_info("[AMF-Health] Registration sent → %s:%u "
-                 "(node_type=AMF, ip=%s, port=%u)",
-                 g_reg_server_ip, (unsigned)g_reg_server_port,
-                 g_advertise_ip, (unsigned)g_port);
-
-        /* Read optional RegisterResponse (server may not reply) */
-        uint8_t resp_buf[128];
-        int resp_len = read_delimited(sfd, resp_buf, (int)sizeof(resp_buf));
-        if (resp_len >= 2 && resp_buf[0] == 0x08) {
-            /* field 1: success (bool) */
-            int success = (resp_buf[1] == 0x01);
-            if (success)
-                ogs_info("[AMF-Health] Registration: server accepted");
-            else
-                ogs_warn("[AMF-Health] Registration: server rejected");
-        }
-
-        close(sfd);
+    /* Dial the registration server */
+    memset(&srv, 0, sizeof(srv));
+    srv.sin_family = AF_INET;
+    srv.sin_port   = htons(g_reg_server_port);
+    if (inet_pton(AF_INET, g_reg_server_ip, &srv.sin_addr) <= 0) {
+        ogs_warn("[AMF-Health] Registration: invalid server IP '%s'",
+                 g_reg_server_ip);
+        return NULL;
     }
 
-done:
+    sfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sfd < 0) {
+        ogs_warn("[AMF-Health] Registration: socket() failed: %s",
+                 strerror(errno));
+        return NULL;
+    }
+
+    /* 5-second connect + I/O timeout */
+    tv.tv_sec  = 5;
+    tv.tv_usec = 0;
+    setsockopt(sfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    setsockopt(sfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    if (connect(sfd, (struct sockaddr *)&srv, sizeof(srv)) < 0) {
+        ogs_warn("[AMF-Health] Registration: connect(%s:%u) failed: %s",
+                 g_reg_server_ip, (unsigned)g_reg_server_port,
+                 strerror(errno));
+        close(sfd);
+        return NULL;
+    }
+
+    /* Send RegisterRequest */
+    if (write_delimited(sfd, proto, offset) < 0) {
+        ogs_warn("[AMF-Health] Registration: send failed: %s",
+                 strerror(errno));
+        close(sfd);
+        return NULL;
+    }
+
+    ogs_info("[AMF-Health] Registration sent → %s:%u "
+             "(node_type=AMF, ip=%s, port=%u)",
+             g_reg_server_ip, (unsigned)g_reg_server_port,
+             g_advertise_ip, (unsigned)g_port);
+
+    /* Read optional RegisterResponse (server may not reply) */
+    resp_len = read_delimited(sfd, resp_buf, (int)sizeof(resp_buf));
+    if (resp_len >= 2 && resp_buf[0] == 0x08) {
+        /* field 1: success (bool) */
+        int success = (resp_buf[1] == 0x01);
+        if (success)
+            ogs_info("[AMF-Health] Registration: server accepted");
+        else
+            ogs_warn("[AMF-Health] Registration: server rejected");
+    }
+
+    close(sfd);
     return NULL;
 }
 
 void amf_health_send_registration(void)
 {
+    pthread_t t;
+    pthread_attr_t attr;
+
     if (!g_reg_enable) return;
     if (!g_reg_server_ip[0] || !g_reg_server_port) {
         ogs_warn("[AMF-Health] Registration enabled but "
@@ -382,8 +393,6 @@ void amf_health_send_registration(void)
     }
 
     /* Fire and forget — detached thread so we never need to join it */
-    pthread_t t;
-    pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
     if (pthread_create(&t, &attr, do_registration, NULL) != 0)
