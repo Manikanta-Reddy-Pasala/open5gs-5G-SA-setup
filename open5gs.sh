@@ -381,7 +381,10 @@ cmd_status() {
     echo ""
     echo "${BOLD}NRF Registrations:${NC}"
     local nrf_output
-    nrf_output=$(docker exec open5gs-cp wget -qO- http://127.0.0.1:7777/nnrf-nfm/v1/nf-instances 2>/dev/null || echo "")
+    # open5GS NRF speaks HTTP/2 only; wget (HTTP/1.1) fails with bad magic bytes.
+    # Query from host using curl --http2-prior-knowledge via the container's fixed IP.
+    nrf_output=$(curl -s --max-time 5 --http2-prior-knowledge \
+        http://10.200.100.16:7777/nnrf-nfm/v1/nf-instances 2>/dev/null || echo "")
     if [ -n "$nrf_output" ]; then
         # Parse NF types from JSON
         local nf_list
@@ -389,12 +392,11 @@ cmd_status() {
 import json, sys
 try:
     data = json.load(sys.stdin)
-    items = data.get('_links', {}).get('item', [])
-    print(f'  Registered NFs: {len(items)}')
-    # If full profiles are available
-    if isinstance(data, list):
-        for nf in data:
-            print(f'  - {nf.get(\"nfType\",\"?\")} [{nf.get(\"nfStatus\",\"?\")}]')
+    links = data.get('_links', {})
+    # open5GS uses 'items' (plural); fall back to 'item' for compatibility
+    items = links.get('items', links.get('item', []))
+    total = data.get('totalItemCount', len(items))
+    print(f'  Registered NFs: {total}')
 except:
     print('  NRF API responded')
 " 2>/dev/null || echo "  NRF API responded (parse error)")
@@ -412,10 +414,11 @@ except:
         warn "SCTP DNAT rule not found"
     fi
 
-    if ip route show "${UE_SUBNET}" 2>/dev/null | grep -q via; then
-        ok "UE subnet route ${UE_SUBNET} active"
+    if iptables -C FORWARD -s "${UE_SUBNET}" -j ACCEPT >/dev/null 2>&1 || \
+       iptables -C FORWARD -d "${UE_SUBNET}" -j ACCEPT >/dev/null 2>&1; then
+        ok "UE subnet FORWARD rules active (${UE_SUBNET})"
     else
-        warn "UE subnet route not configured"
+        warn "UE subnet FORWARD rules not set (run './open5gs.sh start' to apply)"
     fi
 
     # ── 3. Data Plane (GTP-U) ────────────────────────────────────
@@ -425,11 +428,6 @@ except:
         ok "GTP-U DNAT  :${GTPU_PORT}     OK  -> ${UPF_CUR_IP}:${GTPU_PORT}"
     else
         warn "GTP-U DNAT  :${GTPU_PORT}     MISSING"
-    fi
-    if iptables -C FORWARD -s "${UE_SUBNET}" -j ACCEPT >/dev/null 2>&1; then
-        ok "UE FORWARD rules active (${UE_SUBNET})"
-    else
-        warn "UE FORWARD rules not configured"
     fi
 
     echo ""
