@@ -17,12 +17,12 @@ header "TC09: AMF TCP Health Check (Port ${AMF_HEALTH_PORT})"
 ensure_core_running
 
 # Step 1: Verify AMF health check is enabled via env var
-info "Checking AMF_GRPC_ENABLE environment variable..."
-amf_grpc=$(docker exec open5gs-cp printenv AMF_GRPC_ENABLE 2>/dev/null || echo "")
+info "Checking AMF_TCP_ENABLE environment variable..."
+amf_grpc=$(docker exec open5gs-cp printenv AMF_TCP_ENABLE 2>/dev/null || echo "")
 if [ "$amf_grpc" = "1" ]; then
-    pass "AMF_GRPC_ENABLE=1 (health check enabled)"
+    pass "AMF_TCP_ENABLE=1 (health check enabled)"
 else
-    warn "AMF_GRPC_ENABLE=${amf_grpc:-not set}. Health check may not be active."
+    warn "AMF_TCP_ENABLE=${amf_grpc:-not set}. Health check may not be active."
 fi
 
 # Step 2: Verify port 50051 is listening inside the container
@@ -206,6 +206,6 @@ if [ "$response" = "$EXPECTED" ]; then
     info "Wire: 0x04=len  0x0801=SERVING  0x100d=node_type:AMF(13)"
 else
     echo -e "${RED}${BOLD}TC09 FAILED${NC}: AMF TCP health check not responding as expected"
-    info "Check: docker exec open5gs-cp printenv AMF_GRPC_ENABLE"
+    info "Check: docker exec open5gs-cp printenv AMF_TCP_ENABLE"
     info "Check: docker logs open5gs-cp | grep -i health"
 fi

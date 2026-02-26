@@ -48,15 +48,15 @@ services:
     environment:
       DB_URI: mongodb://db/open5gs
       # ── AMF TCP health check server (port 50051) ──────────
-      AMF_GRPC_ENABLE: "1"
-      AMF_GRPC_PORT: "50051"
-      AMF_GRPC_BIND_ADDR: "0.0.0.0"
-      # Set AMF_GRPC_ADVERTISE_IP to the container's IP for RegisterRequest
-      AMF_GRPC_ADVERTISE_IP: "10.200.100.16"
+      AMF_TCP_ENABLE: "1"
+      AMF_TCP_PORT: "50051"
+      AMF_TCP_BIND_ADDR: "0.0.0.0"
+      # Set AMF_TCP_ADVERTISE_IP to the container's IP for RegisterRequest
+      AMF_TCP_ADVERTISE_IP: "10.200.100.16"
       # ── Registration (set to "1" + configure server to enable) ──
-      AMF_GRPC_REGISTRATION_ENABLE: "0"
-      # AMF_GRPC_REGISTRATION_SERVER_IP: "192.168.1.1"
-      # AMF_GRPC_REGISTRATION_SERVER_PORT: "9090"
+      AMF_TCP_REG_ENABLE: "0"
+      # AMF_TCP_REG_SERVER_IP: "192.168.1.1"
+      # AMF_TCP_REG_SERVER_PORT: "9090"
     ports:
       - "38412:38412/sctp"
       - "50051:50051"

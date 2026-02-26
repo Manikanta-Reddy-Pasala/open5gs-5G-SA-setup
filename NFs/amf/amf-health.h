@@ -12,13 +12,13 @@
  *   RegisterRequest { node_type=AMF(13), ip="<bind_addr>", port=<port> }
  *
  * Configuration (env vars read at amf_health_open() time):
- *   AMF_GRPC_ENABLE           1|0  (default: 1)
- *   AMF_GRPC_PORT             TCP port to bind (default: 50051)
- *   AMF_GRPC_BIND_ADDR        IPv4 address to bind (default: 0.0.0.0)
- *   AMF_GRPC_ADVERTISE_IP     IP sent in RegisterRequest (default: 0.0.0.0)
- *   AMF_GRPC_REGISTRATION_ENABLE   1|0 (default: 0)
- *   AMF_GRPC_REGISTRATION_SERVER_IP     registration server IP
- *   AMF_GRPC_REGISTRATION_SERVER_PORT   registration server TCP port
+ *   AMF_TCP_ENABLE           1|0  (default: 1)
+ *   AMF_TCP_PORT             TCP port to bind (default: 50051)
+ *   AMF_TCP_BIND_ADDR        IPv4 address to bind (default: 0.0.0.0)
+ *   AMF_TCP_ADVERTISE_IP     IP sent in RegisterRequest (default: 0.0.0.0)
+ *   AMF_TCP_REG_ENABLE   1|0 (default: 0)
+ *   AMF_TCP_REG_SERVER_IP     registration server IP
+ *   AMF_TCP_REG_SERVER_PORT   registration server TCP port
  */
 
 #ifndef AMF_HEALTH_H

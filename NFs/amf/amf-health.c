@@ -191,35 +191,35 @@ int amf_health_open(void)
     struct sockaddr_in addr;
 
     /* Read config from environment */
-    env = getenv("AMF_GRPC_ENABLE");
+    env = getenv("AMF_TCP_ENABLE");
     if (env && strcmp(env, "1") != 0) {
-        ogs_info("[AMF-Health] Disabled via AMF_GRPC_ENABLE=%s", env);
+        ogs_info("[AMF-Health] Disabled via AMF_TCP_ENABLE=%s", env);
         return OGS_OK;
     }
 
-    env = getenv("AMF_GRPC_PORT");
+    env = getenv("AMF_TCP_PORT");
     if (env && atoi(env) > 0)
         g_port = (uint16_t)atoi(env);
 
-    env = getenv("AMF_GRPC_BIND_ADDR");
+    env = getenv("AMF_TCP_BIND_ADDR");
     if (env && strlen(env) > 0)
         snprintf(g_bind_addr, sizeof(g_bind_addr), "%s", env);
 
-    env = getenv("AMF_GRPC_ADVERTISE_IP");
+    env = getenv("AMF_TCP_ADVERTISE_IP");
     if (env && strlen(env) > 0)
         snprintf(g_advertise_ip, sizeof(g_advertise_ip), "%s", env);
     else
         snprintf(g_advertise_ip, sizeof(g_advertise_ip), "%s", g_bind_addr);
 
-    env = getenv("AMF_GRPC_REGISTRATION_ENABLE");
+    env = getenv("AMF_TCP_REG_ENABLE");
     g_reg_enable = (env && strcmp(env, "1") == 0) ? 1 : 0;
 
     if (g_reg_enable) {
-        env = getenv("AMF_GRPC_REGISTRATION_SERVER_IP");
+        env = getenv("AMF_TCP_REG_SERVER_IP");
         if (env)
             snprintf(g_reg_server_ip, sizeof(g_reg_server_ip), "%s", env);
 
-        env = getenv("AMF_GRPC_REGISTRATION_SERVER_PORT");
+        env = getenv("AMF_TCP_REG_SERVER_PORT");
         if (env && atoi(env) > 0)
             g_reg_server_port = (uint16_t)atoi(env);
     }
@@ -399,7 +399,7 @@ void amf_health_send_registration(void)
     if (!g_reg_enable) return;
     if (!g_reg_server_ip[0] || !g_reg_server_port) {
         ogs_warn("[AMF-Health] Registration enabled but "
-                 "AMF_GRPC_REGISTRATION_SERVER_IP / _PORT not set");
+                 "AMF_TCP_REG_SERVER_IP / _PORT not set");
         return;
     }
 
