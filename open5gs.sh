@@ -32,6 +32,7 @@ COMPOSE_FILE="docker-compose.yaml"
 OPEN5GS_VERSION="v2.7.5"
 AMF_IP="10.200.100.16"
 NGAP_PORT="38412"
+GTPU_PORT="2152"
 
 # Subscriber / PLMN defaults
 IMSI="imsi-001010000050641"
@@ -113,6 +114,19 @@ setup_dataplane() {
     fi
     ip route add "${UE_SUBNET}" via "$UPF_IP" 2>/dev/null || true
     iptables -t nat -A POSTROUTING -s "${UE_SUBNET}" -j MASQUERADE 2>/dev/null || true
+    log "  NAT: MASQUERADE for ${UE_SUBNET}"
+
+    # FORWARD: allow UE traffic through the host
+    iptables -I FORWARD 1 -s "${UE_SUBNET}" -j ACCEPT
+    iptables -I FORWARD 1 -d "${UE_SUBNET}" -j ACCEPT
+    log "  FORWARD: ACCEPT for ${UE_SUBNET}"
+
+    # GTP-U: DNAT host:2152 -> UPF container (for real gNB traffic)
+    iptables -t nat -A PREROUTING -p udp --dport "$GTPU_PORT" -j DNAT --to-destination "${UPF_IP}:${GTPU_PORT}"
+    iptables -t nat -A OUTPUT     -p udp --dport "$GTPU_PORT" -j DNAT --to-destination "${UPF_IP}:${GTPU_PORT}"
+    iptables -I FORWARD 1 -p udp -d "$UPF_IP" --dport "$GTPU_PORT" -j ACCEPT
+    iptables -I FORWARD 1 -p udp -s "$UPF_IP" --sport "$GTPU_PORT" -j ACCEPT
+    log "  GTP-U: DNAT host:${GTPU_PORT} -> ${UPF_IP}:${GTPU_PORT}"
     ok "Route ${UE_SUBNET} -> ${UPF_IP} added"
 }
 
@@ -121,6 +135,14 @@ cleanup_dataplane() {
     UPF_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' open5gs-upf 2>/dev/null | head -1)
     [ -n "$UPF_IP" ] && ip route del "${UE_SUBNET}" via "$UPF_IP" 2>/dev/null || true
     iptables -t nat -D POSTROUTING -s "${UE_SUBNET}" -j MASQUERADE 2>/dev/null || true
+    iptables -D FORWARD -s "${UE_SUBNET}" -j ACCEPT 2>/dev/null || true
+    iptables -D FORWARD -d "${UE_SUBNET}" -j ACCEPT 2>/dev/null || true
+    if [ -n "$UPF_IP" ]; then
+        iptables -t nat -D PREROUTING -p udp --dport "$GTPU_PORT" -j DNAT --to-destination "${UPF_IP}:${GTPU_PORT}" 2>/dev/null || true
+        iptables -t nat -D OUTPUT     -p udp --dport "$GTPU_PORT" -j DNAT --to-destination "${UPF_IP}:${GTPU_PORT}" 2>/dev/null || true
+        iptables -D FORWARD -p udp -d "$UPF_IP" --dport "$GTPU_PORT" -j ACCEPT 2>/dev/null || true
+        iptables -D FORWARD -p udp -s "$UPF_IP" --sport "$GTPU_PORT" -j ACCEPT 2>/dev/null || true
+    fi
 }
 
 update_plmn_config() {
@@ -359,6 +381,20 @@ except:
         ok "UE subnet route ${UE_SUBNET} active"
     else
         warn "UE subnet route not configured"
+    fi
+
+    # ── 3. Data Plane (GTP-U) ────────────────────────────────────
+    local UPF_CUR_IP
+    UPF_CUR_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' open5gs-upf 2>/dev/null | head -1)
+    if [ -n "$UPF_CUR_IP" ] && iptables -t nat -C PREROUTING -p udp --dport "$GTPU_PORT" -j DNAT --to-destination "${UPF_CUR_IP}:${GTPU_PORT}" >/dev/null 2>&1; then
+        ok "GTP-U DNAT  :${GTPU_PORT}     OK  -> ${UPF_CUR_IP}:${GTPU_PORT}"
+    else
+        warn "GTP-U DNAT  :${GTPU_PORT}     MISSING"
+    fi
+    if iptables -C FORWARD -s "${UE_SUBNET}" -j ACCEPT >/dev/null 2>&1; then
+        ok "UE FORWARD rules active (${UE_SUBNET})"
+    else
+        warn "UE FORWARD rules not configured"
     fi
 
     echo ""
