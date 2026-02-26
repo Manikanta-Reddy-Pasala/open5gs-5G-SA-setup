@@ -374,9 +374,17 @@ cmd_status() {
     done
 
     # Check UERANSIM (optional)
-    local ur_state
-    ur_state=$(docker inspect --format='{{.State.Status}}' "open5gs-ueransim" 2>/dev/null || echo "not running")
-    printf "  ${CYAN}○${NC} %-25s %s (optional)\n" "open5gs-ueransim" "$ur_state"
+    if docker inspect "open5gs-ueransim" >/dev/null 2>&1; then
+        local ur_state
+        ur_state=$(docker inspect --format='{{.State.Status}}' "open5gs-ueransim" 2>/dev/null)
+        if [ "$ur_state" = "running" ]; then
+            printf "  ${GREEN}✓${NC} %-25s running (optional)\n" "open5gs-ueransim"
+        else
+            printf "  ${CYAN}○${NC} %-25s %s (optional)\n" "open5gs-ueransim" "$ur_state"
+        fi
+    else
+        printf "  ${CYAN}○${NC} %-25s not running (optional)\n" "open5gs-ueransim"
+    fi
 
     echo ""
     echo "${BOLD}NRF Registrations:${NC}"
@@ -408,26 +416,28 @@ except:
 
     echo ""
     echo "${BOLD}Network:${NC}"
+    # ── SCTP DNAT (external gNB only) ────────────────────────────
     if iptables -t nat -L PREROUTING -n 2>/dev/null | grep -q "dpt:${NGAP_PORT}"; then
-        ok "SCTP DNAT rule active (host:${NGAP_PORT} -> ${AMF_IP}:${NGAP_PORT})"
+        ok "SCTP DNAT  :${NGAP_PORT}  active  -> ${AMF_IP}:${NGAP_PORT}"
     else
-        warn "SCTP DNAT rule not found"
+        log "  ℹ SCTP DNAT  :${NGAP_PORT}  not set  (only needed for external gNB)"
     fi
 
+    # ── UE subnet FORWARD (external gNB only) ────────────────────
     if iptables -C FORWARD -s "${UE_SUBNET}" -j ACCEPT >/dev/null 2>&1 || \
        iptables -C FORWARD -d "${UE_SUBNET}" -j ACCEPT >/dev/null 2>&1; then
-        ok "UE subnet FORWARD rules active (${UE_SUBNET})"
+        ok "UE subnet FORWARD active (${UE_SUBNET})"
     else
-        warn "UE subnet FORWARD rules not set (run './open5gs.sh start' to apply)"
+        log "  ℹ UE subnet FORWARD not set  (only needed for external gNB)"
     fi
 
-    # ── 3. Data Plane (GTP-U) ────────────────────────────────────
+    # ── GTP-U DNAT (external gNB only) ───────────────────────────
     local UPF_CUR_IP
     UPF_CUR_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' open5gs-upf 2>/dev/null | head -1)
     if [ -n "$UPF_CUR_IP" ] && iptables -t nat -C PREROUTING -p udp --dport "$GTPU_PORT" -j DNAT --to-destination "${UPF_CUR_IP}:${GTPU_PORT}" >/dev/null 2>&1; then
-        ok "GTP-U DNAT  :${GTPU_PORT}     OK  -> ${UPF_CUR_IP}:${GTPU_PORT}"
+        ok "GTP-U DNAT  :${GTPU_PORT}    active  -> ${UPF_CUR_IP}:${GTPU_PORT}"
     else
-        warn "GTP-U DNAT  :${GTPU_PORT}     MISSING"
+        log "  ℹ GTP-U DNAT  :${GTPU_PORT}    not set  (only needed for external gNB)"
     fi
 
     echo ""
