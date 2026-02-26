@@ -30,18 +30,31 @@ enum ServingStatus {
 // Wire format (raw TCP, no gRPC framing):
 //   [varint: payload_length][proto-encoded HealthCheckResponse]
 //
-// Wire bytes for SERVING:
-//   0x04 0x08 0x01 0x10 0x0D
-//   ^^^^                     — varint length = 4
-//        ^^^^ ^^^^           — field 1 (status), wire type 0 (varint), value 1 = SERVING
-//                  ^^^^ ^^^^ — field 2 (node_type), wire type 0 (varint), value 13 = AMF
+// The response carries full identity + reachability so any monitoring client
+// knows what NF responded and how to reach it again:
+//   field 1 (status):    SERVING(1) or NOT_SERVING(2)
+//   field 2 (node_type): AMF(13)
+//   field 3 (ip):        AMF's advertised IP  (from AMF_TCP_ADVERTISE_IP)
+//   field 4 (port):      AMF's TCP port        (from AMF_TCP_PORT, default 50051)
 //
-// Test: python3 -c "import socket; s=socket.socket(); \
-//   s.connect(('AMF_HOST', 50051)); print(s.recv(64).hex()); s.close()"
-// Expected output: 040801100d
+// Test:
+//   python3 -c "
+//   import socket, time
+//   s = socket.socket(); s.connect(('AMF_HOST', 50051)); time.sleep(0.6)
+//   data = b''
+//   s.settimeout(1)
+//   try:
+//     while True:
+//       c = s.recv(64)
+//       if not c: break
+//       data += c
+//   except: pass
+//   s.close(); print(data.hex())"
 message HealthCheckResponse {
   ServingStatus status    = 1;  // SERVING(1) or NOT_SERVING(2)
   NodeType      node_type = 2;  // Always AMF(13) — identifies the responding NF
+  string        ip        = 3;  // AMF's advertised IP  (AMF_TCP_ADVERTISE_IP)
+  uint32        port      = 4;  // AMF's TCP port       (AMF_TCP_PORT)
 }
 
 // ─── Node Registration ────────────────────────────────────────────────────────
@@ -74,11 +87,11 @@ enum NodeType {
 // Wire format: [varint: payload_length][proto-encoded RegisterRequest]
 //
 // Controlled by environment variables (see amf-health.h):
-//   AMF_GRPC_REGISTRATION_ENABLE       = "1" to enable (default: "0")
-//   AMF_GRPC_REGISTRATION_SERVER_IP    = registration server IP
-//   AMF_GRPC_REGISTRATION_SERVER_PORT  = registration server TCP port
-//   AMF_GRPC_ADVERTISE_IP              = IP reported in this message
-//   AMF_GRPC_PORT                      = port reported in this message
+//   AMF_TCP_REG_ENABLE       = "1" to enable (default: "0")
+//   AMF_TCP_REG_SERVER_IP    = registration server IP
+//   AMF_TCP_REG_SERVER_PORT  = registration server TCP port
+//   AMF_TCP_ADVERTISE_IP     = IP reported in this message
+//   AMF_TCP_PORT             = port reported in this message
 message RegisterRequest {
   NodeType node_type = 1;   // Always AMF = 13
   string   ip        = 2;   // AMF's advertised health-check IP

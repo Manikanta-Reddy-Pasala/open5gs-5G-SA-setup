@@ -307,13 +307,40 @@ reset_ueransim() {
     sleep 10
 }
 
-# Check AMF TCP health check (port 50051) — returns 0 if SERVING
+# Check AMF TCP health check (port 50051) — returns 0 if SERVING+AMF
+# Parses proto fields: status=1(SERVING), node_type=13(AMF), ip, port
 check_amf_health() {
     local host="${1:-${AMF_HEALTH_HOST}}"
     local port="${2:-${AMF_HEALTH_PORT}}"
-    local response
-    response=$(python3 -c "
+    python3 -c "
 import socket, sys, time
+
+def read_varint(data, i):
+    val, shift = 0, 0
+    while i < len(data):
+        b = data[i]; i += 1
+        val |= (b & 0x7F) << shift
+        shift += 7
+        if not (b & 0x80): break
+    return val, i
+
+def parse_proto(data):
+    # skip length prefix varint
+    _, i = read_varint(data, 0)
+    fields = {}
+    while i < len(data):
+        tag_byte = data[i]; i += 1
+        field_num = tag_byte >> 3
+        wire_type = tag_byte & 0x07
+        if wire_type == 0:
+            val, i = read_varint(data, i)
+            fields[field_num] = val
+        elif wire_type == 2:
+            length, i = read_varint(data, i)
+            fields[field_num] = data[i:i+length].decode('utf-8', errors='replace')
+            i += length
+    return fields
+
 try:
     s = socket.socket()
     s.settimeout(3)
@@ -323,18 +350,18 @@ try:
     s.settimeout(1)
     try:
         while True:
-            chunk = s.recv(64)
+            chunk = s.recv(256)
             if not chunk: break
             data += chunk
-    except: pass
+    except Exception: pass
     s.close()
-    print(data.hex())
+    fields = parse_proto(data)
+    status    = fields.get(1, 0)
+    node_type = fields.get(2, 0)
+    sys.exit(0 if status == 1 and node_type == 13 else 1)
 except Exception as e:
-    print('ERROR: ' + str(e), file=sys.stderr)
     sys.exit(1)
-" 2>/dev/null)
-    # SERVING + node_type=AMF(13) = 0x04 0x08 0x01 0x10 0x0D
-    [ "$response" = "040801100d" ]
+" 2>/dev/null
 }
 
 # Ensure UERANSIM container is running (start if not)

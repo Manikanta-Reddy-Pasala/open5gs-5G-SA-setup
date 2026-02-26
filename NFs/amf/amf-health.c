@@ -86,36 +86,13 @@ static int write_delimited(int fd, const uint8_t *data, int data_len)
 }
 
 /* =========================================================
- * HealthCheckResponse wire encoding
- *
- * Proto:
- *   message HealthCheckResponse {
- *     ServingStatus status    = 1;   // field tag 0x08
- *     NodeType      node_type = 2;   // field tag 0x10
- *   }
- *
- * SERVING + AMF(13):
- *   field 1 (status=1):     tag=0x08, varint=0x01
- *   field 2 (node_type=13): tag=0x10, varint=0x0D
- *   payload = { 0x08, 0x01, 0x10, 0x0D }  (4 bytes)
- *
- * On the wire (varint-length-prefixed):
- *   SERVING+AMF → { 0x04, 0x08, 0x01, 0x10, 0x0D }
- *                   ^^^^  payload len=4
- *                         ^^^^^^^^^^^  status=SERVING
- *                                      ^^^^^^^^^^^^ node_type=AMF
- * ========================================================= */
-static const uint8_t HEALTH_RESP_SERVING[4] = { 0x08, 0x01, 0x10, 0x0D };
-#define HEALTH_RESP_LEN 4
-
-/* =========================================================
  * Server state
  * ========================================================= */
 static int              server_fd      = -1;
 static pthread_t        server_thread;
 static volatile int     server_running = 0;
 
-/* Advertised IP / port stored at open time (for registration) */
+/* Advertised IP / port stored at open time (for health response + registration) */
 static char     g_bind_addr[64]     = "0.0.0.0";
 static char     g_advertise_ip[64]  = "0.0.0.0";
 static uint16_t g_port              = 50051;
@@ -124,6 +101,57 @@ static uint16_t g_port              = 50051;
 static int      g_reg_enable        = 0;
 static char     g_reg_server_ip[64] = "";
 static uint16_t g_reg_server_port   = 0;
+
+/* =========================================================
+ * HealthCheckResponse wire encoding (built dynamically)
+ *
+ * Proto:
+ *   message HealthCheckResponse {
+ *     ServingStatus status    = 1;   // tag 0x08
+ *     NodeType      node_type = 2;   // tag 0x10
+ *     string        ip        = 3;   // tag 0x1A (length-delimited)
+ *     uint32        port      = 4;   // tag 0x20
+ *   }
+ *
+ * Fields 1+2 are fixed; fields 3+4 are encoded from g_advertise_ip / g_port
+ * at connection time so clients get full AMF identity + reachability info.
+ * ========================================================= */
+static int build_health_response(uint8_t *buf, int bufsz)
+{
+    int offset = 0;
+    int vn;
+
+    /* field 1: status = SERVING(1) */
+    if (offset + 2 > bufsz) return -1;
+    buf[offset++] = 0x08;
+    buf[offset++] = 0x01;
+
+    /* field 2: node_type = AMF(13) */
+    if (offset + 2 > bufsz) return -1;
+    buf[offset++] = 0x10;
+    buf[offset++] = 0x0D;
+
+    /* field 3: ip (string, length-delimited) */
+    {
+        int ip_len = (int)strlen(g_advertise_ip);
+        if (offset + 2 + ip_len > bufsz) return -1;
+        buf[offset++] = 0x1A;  /* tag: field 3, wire type 2 */
+        vn = varint_encode((uint64_t)ip_len, buf + offset, bufsz - offset);
+        if (vn < 0) return -1;
+        offset += vn;
+        memcpy(buf + offset, g_advertise_ip, (size_t)ip_len);
+        offset += ip_len;
+    }
+
+    /* field 4: port (varint) */
+    if (offset + 1 > bufsz) return -1;
+    buf[offset++] = 0x20;  /* tag: field 4, wire type 0 */
+    vn = varint_encode((uint64_t)g_port, buf + offset, bufsz - offset);
+    if (vn < 0) return -1;
+    offset += vn;
+
+    return offset;
+}
 
 /* =========================================================
  * Per-connection handler (called from accept loop)
@@ -148,7 +176,11 @@ static void handle_connection(int cfd)
     tv_zero.tv_usec = 0;
     setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &tv_zero, sizeof(tv_zero));
 
-    write_delimited(cfd, HEALTH_RESP_SERVING, HEALTH_RESP_LEN);
+    /* Build dynamic response: status + node_type + ip + port */
+    uint8_t resp_buf[256];
+    int resp_len = build_health_response(resp_buf, (int)sizeof(resp_buf));
+    if (resp_len > 0)
+        write_delimited(cfd, resp_buf, resp_len);
     close(cfd);
 }
 
