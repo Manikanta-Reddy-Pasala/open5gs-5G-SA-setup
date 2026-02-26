@@ -14,8 +14,8 @@ upf:
     server:
       - address: 0.0.0.0
   session:
-    - subnet: 10.45.0.0/16
-      gateway: 10.45.0.1
+    - subnet: 10.206.0.0/16
+      gateway: 10.206.0.1
       dnn: internet
   metrics:
     server:

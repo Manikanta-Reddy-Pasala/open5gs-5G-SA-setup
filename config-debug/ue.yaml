@@ -28,16 +28,16 @@ sessions:
   - type: 'IPv4'
     apn: 'internet'
     slice:
-      sst: 1
-      sd: 0x111111
+      sst: 3
+      sd: 0x198153
 
 configured-nssai:
-  - sst: 1
-    sd: 0x111111
+  - sst: 3
+    sd: 0x198153
 
 default-nssai:
-  - sst: 1
-    sd: 0x111111
+  - sst: 3
+    sd: 0x198153
 
 integrity:
   IA1: true

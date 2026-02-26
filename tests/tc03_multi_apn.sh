@@ -75,7 +75,7 @@ if echo "$ps_list" | grep -q "ims"; then
 else
     warn "PDU session on DNN 'ims' not established"
     info "Attempting manual PDU session establishment..."
-    docker exec open5gs-ueransim ./nr-cli "$IMSI" -e "ps-establish IPv4 --dnn ims --sst 1 --sd 111111" 2>/dev/null
+    docker exec open5gs-ueransim ./nr-cli "$IMSI" -e "ps-establish IPv4 --dnn ims --sst 3 --sd 198153" 2>/dev/null
     sleep 5
     ps_list2=$(docker exec open5gs-ueransim ./nr-cli "$IMSI" -e "ps-list" 2>/dev/null)
     if echo "$ps_list2" | grep -q "ims"; then

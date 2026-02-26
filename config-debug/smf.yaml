@@ -28,14 +28,14 @@ smf:
       - address: 0.0.0.0
         port: 9091
   session:
-    - subnet: 10.45.0.0/16
-      gateway: 10.45.0.1
+    - subnet: 10.206.0.0/16
+      gateway: 10.206.0.1
   dns:
     - 8.8.8.8
     - 8.8.4.4
   mtu: 1400
   info:
     - s_nssai:
-        - sst: 1
+        - sst: 3
           dnn:
             - internet

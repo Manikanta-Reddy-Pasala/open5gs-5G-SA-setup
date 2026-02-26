@@ -18,9 +18,9 @@ BOLD=$'\033[1m'
 NC=$'\033[0m'
 
 # Test defaults (matching open5GS deployment)
-WEBUI_PORT=9999
-SST=1
-SD="111111"
+WEBUI_PORT=4000
+SST=3
+SD="198153"
 DNN="internet"
 AMF_FIELD="8000"
 BASE_K="0c57e15a2cb86087097a6b50d42531de"
@@ -245,8 +245,8 @@ generate_ue_config() {
   - type: 'IPv4'
     apn: '${dnn}'
     slice:
-      sst: 0x01
-      sd: 0x111111"
+      sst: 0x03
+      sd: 0x198153"
     done
 
     cat > "$output" <<UECFG
@@ -275,11 +275,11 @@ uacAcc:
   class15: false
 sessions:${session_block}
 configured-nssai:
-  - sst: 1
-    sd: 0x111111
+  - sst: 3
+    sd: 0x198153
 default-nssai:
-  - sst: 1
-    sd: 0x111111
+  - sst: 3
+    sd: 0x198153
 integrity:
   IA1: true
   IA2: true

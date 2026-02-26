@@ -117,10 +117,10 @@ services:
       dockerfile: Dockerfile.webui
     environment:
       DB_URI: mongodb://db/open5gs
-      NEXTAUTH_URL: http://localhost:9999
+      NEXTAUTH_URL: http://localhost:4000
       NEXTAUTH_SECRET: open5gs-secret-key
     ports:
-      - "9999:9999"
+      - "4000:4000"
     networks:
       open5gs-net:
         aliases:
