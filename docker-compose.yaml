@@ -119,6 +119,7 @@ services:
       DB_URI: mongodb://db/open5gs
       NEXTAUTH_URL: http://localhost:9999
       NEXTAUTH_SECRET: open5gs-secret-key
+      NODE_ENV: production
     ports:
       - "4000:9999"
     networks:
