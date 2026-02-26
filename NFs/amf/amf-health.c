@@ -88,14 +88,25 @@ static int write_delimited(int fd, const uint8_t *data, int data_len)
 /* =========================================================
  * HealthCheckResponse wire encoding
  *
- * Proto:   message HealthCheckResponse { ServingStatus status = 1; }
- * SERVING  → field 1 varint 1 → bytes { 0x08, 0x01 }
+ * Proto:
+ *   message HealthCheckResponse {
+ *     ServingStatus status    = 1;   // field tag 0x08
+ *     NodeType      node_type = 2;   // field tag 0x10
+ *   }
+ *
+ * SERVING + AMF(13):
+ *   field 1 (status=1):     tag=0x08, varint=0x01
+ *   field 2 (node_type=13): tag=0x10, varint=0x0D
+ *   payload = { 0x08, 0x01, 0x10, 0x0D }  (4 bytes)
  *
  * On the wire (varint-length-prefixed):
- *   SERVING → { 0x02, 0x08, 0x01 }
+ *   SERVING+AMF → { 0x04, 0x08, 0x01, 0x10, 0x0D }
+ *                   ^^^^  payload len=4
+ *                         ^^^^^^^^^^^  status=SERVING
+ *                                      ^^^^^^^^^^^^ node_type=AMF
  * ========================================================= */
-static const uint8_t HEALTH_RESP_SERVING[2] = { 0x08, 0x01 };
-#define HEALTH_RESP_LEN 2
+static const uint8_t HEALTH_RESP_SERVING[4] = { 0x08, 0x01, 0x10, 0x0D };
+#define HEALTH_RESP_LEN 4
 
 /* =========================================================
  * Server state

@@ -313,20 +313,28 @@ check_amf_health() {
     local port="${2:-${AMF_HEALTH_PORT}}"
     local response
     response=$(python3 -c "
-import socket, sys
+import socket, sys, time
 try:
     s = socket.socket()
     s.settimeout(3)
     s.connect(('${host}', ${port}))
-    data = s.recv(64)
+    time.sleep(0.6)
+    data = b''
+    s.settimeout(1)
+    try:
+        while True:
+            chunk = s.recv(64)
+            if not chunk: break
+            data += chunk
+    except: pass
     s.close()
     print(data.hex())
 except Exception as e:
     print('ERROR: ' + str(e), file=sys.stderr)
     sys.exit(1)
 " 2>/dev/null)
-    # SERVING = 0x020801
-    [ "$response" = "020801" ]
+    # SERVING + node_type=AMF(13) = 0x04 0x08 0x01 0x10 0x0D
+    [ "$response" = "040801100d" ]
 }
 
 # Ensure UERANSIM container is running (start if not)

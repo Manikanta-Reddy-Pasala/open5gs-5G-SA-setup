@@ -30,17 +30,18 @@ enum ServingStatus {
 // Wire format (raw TCP, no gRPC framing):
 //   [varint: payload_length][proto-encoded HealthCheckResponse]
 //
-// Wire bytes for SERVING (most common probe response):
-//   0x02 0x08 0x01
-//     ^^           — varint length = 2
-//          ^^^^    — field 1 (status), wire type 0 (varint)
-//               ^^ — value 1 = SERVING
+// Wire bytes for SERVING:
+//   0x04 0x08 0x01 0x10 0x0D
+//   ^^^^                     — varint length = 4
+//        ^^^^ ^^^^           — field 1 (status), wire type 0 (varint), value 1 = SERVING
+//                  ^^^^ ^^^^ — field 2 (node_type), wire type 0 (varint), value 13 = AMF
 //
 // Test: python3 -c "import socket; s=socket.socket(); \
 //   s.connect(('AMF_HOST', 50051)); print(s.recv(64).hex()); s.close()"
-// Expected output: 020801
+// Expected output: 040801100d
 message HealthCheckResponse {
-  ServingStatus status = 1;
+  ServingStatus status    = 1;  // SERVING(1) or NOT_SERVING(2)
+  NodeType      node_type = 2;  // Always AMF(13) — identifies the responding NF
 }
 
 // ─── Node Registration ────────────────────────────────────────────────────────

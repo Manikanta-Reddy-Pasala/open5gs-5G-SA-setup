@@ -6,8 +6,8 @@
  * Wire protocol (both directions):
  *   [varint: N][N bytes: proto-encoded message]
  *
- *   HealthCheckResponse { status: SERVING  }  → 0x02 0x08 0x01
- *   HealthCheckResponse { status: NOT_SERVING} → 0x02 0x08 0x02
+ *   HealthCheckResponse { status: SERVING, node_type: AMF(13) }  → 0x04 0x08 0x01 0x10 0x0D
+ *   (node_type=AMF is always included so clients know which NF responded)
  *
  *   RegisterRequest { node_type=AMF(13), ip="<bind_addr>", port=<port> }
  *
