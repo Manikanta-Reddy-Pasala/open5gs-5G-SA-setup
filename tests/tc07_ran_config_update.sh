@@ -66,21 +66,21 @@ fi
 
 info "Restarting UERANSIM gNB with new TAC..."
 docker restart open5gs-ueransim >/dev/null 2>&1
-sleep 12
 
 # Step 4: Verify gNB reconnects with new TAC
-gnb_logs=$(docker logs open5gs-ueransim --tail 30 2>&1)
-if echo "$gnb_logs" | grep -qi "NG Setup\|ngSetup\|NGAP"; then
+if wait_gnb_connected 60; then
     pass "gNB re-established NG Setup with new TAC"
 else
+    gnb_logs=$(docker logs open5gs-ueransim --tail 30 2>&1)
     info "gNB logs:"
     echo "$gnb_logs" | tail -10
 fi
+sleep 5
 
 # Step 5: Register UE and verify new TAC
 info "Registering UE with new TAC..."
 docker exec -d open5gs-ueransim ./nr-ue -c ./config/ue.yaml
-sleep 12
+sleep 20
 status=$(docker exec open5gs-ueransim ./nr-cli "$IMSI" -e "status" 2>/dev/null)
 if echo "$status" | grep -q "RM-REGISTERED"; then
     pass "UE registered with updated TAC"

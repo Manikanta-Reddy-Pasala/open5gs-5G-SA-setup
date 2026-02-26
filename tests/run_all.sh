@@ -125,22 +125,22 @@ for tc_num in "${TESTS_TO_RUN[@]}"; do
     name="${TC_NAME[$tc_num]}"
     case "$result" in
         PASSED)
-            printf "  ${GREEN}PASSED${NC}  TC%02d: %s\n" "$tc_num" "$name"
+            printf "  ${GREEN}PASSED${NC}  TC%02d: %s\n" "$tc_num" "$name" | tee -a "$SUMMARY_LOG"
             passed=$((passed + 1))
             ;;
         FAILED)
-            printf "  ${RED}FAILED${NC}  TC%02d: %s\n" "$tc_num" "$name"
+            printf "  ${RED}FAILED${NC}  TC%02d: %s\n" "$tc_num" "$name" | tee -a "$SUMMARY_LOG"
             failed=$((failed + 1))
             ;;
         SKIP)
-            printf "  ${YELLOW}SKIP${NC}    TC%02d: %s\n" "$tc_num" "$name"
+            printf "  ${YELLOW}SKIP${NC}    TC%02d: %s\n" "$tc_num" "$name" | tee -a "$SUMMARY_LOG"
             skipped=$((skipped + 1))
             ;;
         *)
-            printf "  ${CYAN}DONE${NC}    TC%02d: %s\n" "$tc_num" "$name"
+            printf "  ${CYAN}DONE${NC}    TC%02d: %s\n" "$tc_num" "$name" | tee -a "$SUMMARY_LOG"
             ;;
     esac
-done | tee -a "$SUMMARY_LOG"
+done
 
 echo "" | tee -a "$SUMMARY_LOG"
 echo -e "  Total: ${#TESTS_TO_RUN[@]}  |  ${GREEN}Passed: ${passed}${NC}  |  ${RED}Failed: ${failed}${NC}  |  Skipped: ${skipped}" | tee -a "$SUMMARY_LOG"

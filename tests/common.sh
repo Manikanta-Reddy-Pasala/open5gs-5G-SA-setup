@@ -90,6 +90,22 @@ wait_cp_healthy() {
     return 1
 }
 
+# Wait for UERANSIM gNB to show NG Setup in logs (polls with timeout)
+wait_gnb_connected() {
+    local max="${1:-60}"
+    local waited=0
+    while [ $waited -lt "$max" ]; do
+        local logs
+        logs=$(docker logs open5gs-ueransim --tail 50 2>&1)
+        if echo "$logs" | grep -qi "NG Setup\|ngSetup\|NGAP"; then
+            return 0
+        fi
+        sleep 3
+        waited=$((waited + 3))
+    done
+    return 1
+}
+
 # Provision a subscriber directly into MongoDB (open5gs schema)
 # Args: imsi_plain (no "imsi-" prefix), k, opc
 provision_subscriber() {

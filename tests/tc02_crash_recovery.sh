@@ -65,10 +65,15 @@ fi
 
 # Restart UERANSIM to reconnect gNB after CP restart
 docker restart open5gs-ueransim >/dev/null 2>&1
-sleep 10
+if wait_gnb_connected 60; then
+    info "gNB reconnected after CP restart"
+else
+    warn "gNB did not show NG Setup within 60s"
+fi
+sleep 5
 
 docker exec -d open5gs-ueransim ./nr-ue -c ./config/ue.yaml
-sleep 12
+sleep 20
 
 status=$(docker exec open5gs-ueransim ./nr-cli "$IMSI" -e "status" 2>/dev/null)
 if echo "$status" | grep -q "RM-REGISTERED"; then
@@ -96,9 +101,14 @@ else
 fi
 
 docker restart open5gs-ueransim >/dev/null 2>&1
-sleep 10
+if wait_gnb_connected 60; then
+    info "gNB reconnected after MongoDB+CP restart"
+else
+    warn "gNB did not show NG Setup within 60s"
+fi
+sleep 5
 docker exec -d open5gs-ueransim ./nr-ue -c ./config/ue.yaml
-sleep 12
+sleep 20
 
 status=$(docker exec open5gs-ueransim ./nr-cli "$IMSI" -e "status" 2>/dev/null)
 if echo "$status" | grep -q "RM-REGISTERED"; then

@@ -89,7 +89,10 @@ fi
 
 # Step 7: Check TUN interfaces
 tun_list=$(docker exec open5gs-ueransim ip addr show 2>/dev/null | grep "uesimtun")
-tun_count=$(echo "$tun_list" | grep -c "uesimtun" || echo 0)
+# grep -c exits 1 on 0 matches (producing "0" output) — "|| echo 0" would then
+# also run, creating "0\n0". Use explicit test instead.
+tun_count=0
+[ -n "$tun_list" ] && tun_count=$(echo "$tun_list" | grep -c "uesimtun")
 info "TUN interfaces: ${tun_count}"
 echo "$tun_list"
 
