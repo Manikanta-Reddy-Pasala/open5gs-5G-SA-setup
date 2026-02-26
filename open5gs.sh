@@ -11,6 +11,7 @@
 #   ./open5gs.sh start --ueransim     # Start core + UERANSIM simulator
 #   ./open5gs.sh start --debug        # Start with debug-level logging
 #   ./open5gs.sh start --mcc 404 --mnc 30 --tac 1  # Custom PLMN
+#   ./open5gs.sh start --sst 1 --sd 111111          # Custom slice
 #   ./open5gs.sh provision            # Provision default subscriber
 #   ./open5gs.sh bulk-provision --count 10  # Provision 10 subscribers
 #   ./open5gs.sh ue start             # Launch UE (inside UERANSIM container)
@@ -164,6 +165,30 @@ update_plmn_config() {
     log "  PLMN updated in config files"
 }
 
+update_slice_config() {
+    local sst="$1" sd="$2"
+    local cfg_dir="${3:-config}"
+
+    log "Updating slice: SST=${sst} SD=${sd} in ${cfg_dir}/"
+
+    # AMF: sst (int) + sd (decimal, no prefix)
+    sed -i "s/sst: [0-9]*/sst: ${sst}/g"   "${cfg_dir}/amf.yaml"
+    sed -i "s/sd: [0-9a-fA-F]*/sd: ${sd}/g" "${cfg_dir}/amf.yaml"
+
+    # SMF / NSSF: sst only (no SD in these configs)
+    sed -i "s/sst: [0-9]*/sst: ${sst}/g" "${cfg_dir}/smf.yaml"
+    sed -i "s/sst: [0-9]*/sst: ${sst}/g" "${cfg_dir}/nssf.yaml"
+
+    # gNB + UE: sst (int) + sd (0x hex prefix)
+    sed -i "s/sst: [0-9]*/sst: ${sst}/g"         "${cfg_dir}/gnb.yaml"
+    sed -i "s/sd: 0x[0-9a-fA-F]*/sd: 0x${sd}/g"  "${cfg_dir}/gnb.yaml"
+    sed -i "s/sst: [0-9]*/sst: ${sst}/g"         "${cfg_dir}/ue.yaml"
+    sed -i "s/sd: 0x[0-9a-fA-F]*/sd: 0x${sd}/g"  "${cfg_dir}/ue.yaml"
+
+    SST="$sst"; SD="$sd"
+    log "  Slice updated in config files"
+}
+
 # ── Commands ─────────────────────────────────────────────────
 
 cmd_build() {
@@ -224,6 +249,7 @@ cmd_start() {
     local with_ueransim=false
     local debug_mode=false
     local custom_mcc="" custom_mnc="" custom_tac=""
+    local custom_sst="" custom_sd=""
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -232,6 +258,8 @@ cmd_start() {
             --mcc)      custom_mcc="$2";  shift ;;
             --mnc)      custom_mnc="$2";  shift ;;
             --tac)      custom_tac="$2";  shift ;;
+            --sst)      custom_sst="$2";  shift ;;
+            --sd)       custom_sd="$2";   shift ;;
         esac
         shift
     done
@@ -247,6 +275,13 @@ cmd_start() {
             "${custom_mcc:-$MCC}" \
             "${custom_mnc:-$MNC}" \
             "${custom_tac:-$TAC}" \
+            "$cfg_dir"
+    fi
+
+    if [ -n "$custom_sst" ] || [ -n "$custom_sd" ]; then
+        update_slice_config \
+            "${custom_sst:-$SST}" \
+            "${custom_sd:-$SD}" \
             "$cfg_dir"
     fi
 
@@ -639,6 +674,7 @@ cmd_help() {
     echo "    start --ueransim          Start core + UERANSIM gNB"
     echo "    start --debug             Start with debug logging"
     echo "    start --mcc X --mnc Y --tac Z  Custom PLMN"
+    echo "    start --sst X --sd Y           Custom slice (SST/SD)"
     echo "    stop                      Stop all containers"
     echo "    remove                    Remove containers + volumes"
     echo ""

@@ -28,8 +28,8 @@ A fully self-contained 5G Standalone (SA) core network built from source using [
                         │          open5gs-upf (10.200.100.17)         │
   ┌──────────────┐      │                                               │
   │ open5gs-     │      │  GTP-U tunnel                                 │
-  │ webui        │      │  ogstun: 10.45.0.1/16 (UE subnet)           │
-  │ (port 9999)  │      │  iptables NAT → internet                     │
+  │ webui        │      │  ogstun: 10.206.0.1/16 (UE subnet)          │
+  │ (port 4000)  │      │  iptables NAT → internet                     │
   └──────────────┘      └──────────────────────────────────────────────┘
                                        │
                         ┌──────────────▼──────────────────────────────┐
@@ -38,7 +38,7 @@ A fully self-contained 5G Standalone (SA) core network built from source using [
                         └─────────────────────────────────────────────┘
 
   Docker network: open5gs-net (10.200.100.0/24), bridge: br-open5gs
-  UE subnet:      10.45.0.0/16 (ogstun TUN interface on UPF)
+  UE subnet:      10.206.0.0/16 (ogstun TUN interface on UPF)
 ```
 
 ---
@@ -49,8 +49,9 @@ A fully self-contained 5G Standalone (SA) core network built from source using [
 # 1. Build everything from source (~20 minutes first time)
 ./open5gs.sh build
 
-# 2. Start the core
+# 2. Start the core (use --sst / --sd to override slice at runtime)
 ./open5gs.sh start
+# ./open5gs.sh start --sst 1 --sd 111111   # override slice
 
 # 3. Provision the default test subscriber
 ./open5gs.sh provision
@@ -81,6 +82,7 @@ A fully self-contained 5G Standalone (SA) core network built from source using [
 | `./open5gs.sh start --ueransim` | Start core + UERANSIM gNB simulator |
 | `./open5gs.sh start --debug` | Start with debug-level logging |
 | `./open5gs.sh start --mcc 404 --mnc 30 --tac 1` | Start with custom PLMN |
+| `./open5gs.sh start --sst 1 --sd 111111` | Start with custom slice (SST/SD) |
 | `./open5gs.sh stop` | Stop all containers |
 | `./open5gs.sh remove` | Remove all containers and volumes |
 
@@ -156,9 +158,9 @@ All containers share the `open5gs-net` bridge network (`10.200.100.0/24`, bridge
 | Bridge name | `br-open5gs` |
 | CP container IP | `10.200.100.16` |
 | UPF container IP | `10.200.100.17` |
-| UE subnet (ogstun) | `10.45.0.0/16` |
+| UE subnet (ogstun) | `10.206.0.0/16` |
 | NGAP port | `38412/sctp` |
-| WebUI port | `9999` |
+| WebUI port | `4000` |
 
 ---
 
@@ -173,8 +175,8 @@ All containers share the `open5gs-net` bridge network (`10.200.100.0/24`, bridge
 | K (key) | `0c57e15a2cb86087097a6b50d42531de` |
 | OPC | `109ee52735ae6d3849112cf4175029c7` |
 | AMF | `8000` |
-| SST | `1` |
-| SD | `111111` |
+| SST | `3` |
+| SD | `198153` |
 | DNN | `internet` |
 | TAC | `1` |
 
@@ -211,7 +213,7 @@ The gNB config is at `config/gnb.yaml`, UE config at `config/ue.yaml`. Both conn
 
 The open5GS WebUI provides a browser-based subscriber management interface.
 
-- **URL**: `http://<host-ip>:9999`
+- **URL**: `http://<host-ip>:4000`
 - **Login**: `admin` / `1423`
 - **Features**: Add/edit/delete subscribers, view sessions, manage slices
 
@@ -251,32 +253,43 @@ The fork lives entirely in `NFs/amf/amf-health.c` + `amf-health.h`. The `Dockerf
 
 ### TCP Health Check Server (port 50051)
 
-Identical wire format to the free5GC AMF health check endpoint:
+Wire-format-compatible with the free5GC AMF health check endpoint.
 
 ```
 Wire protocol (both directions):
   [varint: N][N bytes: proto-encoded message]
 
-HealthCheckResponse { status: SERVING  } → 0x02 0x08 0x01
-HealthCheckResponse { status: NOT_SERVING } → 0x02 0x08 0x02
+HealthCheckResponse fields:
+  field 1 (status)    varint  SERVING=1 | NOT_SERVING=2
+  field 2 (node_type) varint  AMF=13
+  field 3 (ip)        string  AMF_TCP_ADVERTISE_IP value
+  field 4 (port)      varint  AMF_TCP_PORT value
 ```
 
-- Plain TCP probes (kubernetes liveness, load balancers) that send nothing receive `SERVING` after a 500 ms timeout — no request payload required
+- Plain TCP probes (Kubernetes liveness, load balancers) that send nothing receive the response after a 500 ms timeout — no request payload required
 - Clients may optionally send a `HealthCheckRequest { service: "..." }` before reading the response
 
 **Test:**
 ```bash
-# Plain TCP probe — expect 020801 (SERVING)
+# Plain TCP probe — parse proto response (status + node_type + ip + port)
 python3 -c "
-import socket
+import socket, time
 s = socket.socket()
 s.connect(('<host>', 50051))
-print(s.recv(64).hex())   # → 020801
+time.sleep(0.6)
+data = b''
+s.settimeout(1)
+try:
+    while True:
+        chunk = s.recv(256)
+        if not chunk: break
+        data += chunk
+except Exception: pass
 s.close()
+print(data.hex())
+# SERVING example: 0e 08 01 10 0d 1a 0c 31 30 2e 32 30 30 2e 31 30 30 2e 31 36 20 c7 87 03
+# field1=status(1=SERVING), field2=node_type(13=AMF), field3=ip, field4=port(50051)
 "
-
-# Or with netcat
-echo | nc <host> 50051 | xxd | head -1
 ```
 
 ### Registration Client
@@ -286,8 +299,8 @@ On AMF startup (`amf_state_operational` FSM entry), the AMF optionally sends a `
 ```
 RegisterRequest {
   node_type = AMF (13)
-  ip        = <AMF_GRPC_ADVERTISE_IP>
-  port      = <AMF_GRPC_PORT>
+  ip        = <AMF_TCP_ADVERTISE_IP>
+  port      = <AMF_TCP_PORT>
 }
 ```
 
@@ -299,20 +312,20 @@ All settings are env vars read at startup. Set them in `docker-compose.yaml` und
 
 | Env var | Default | Description |
 |---|---|---|
-| `AMF_GRPC_ENABLE` | `1` | `1` = start health server, `0` = disable |
-| `AMF_GRPC_PORT` | `50051` | TCP port to bind |
-| `AMF_GRPC_BIND_ADDR` | `0.0.0.0` | IPv4 address to bind |
-| `AMF_GRPC_ADVERTISE_IP` | same as BIND_ADDR | IP advertised in RegisterRequest |
-| `AMF_GRPC_REGISTRATION_ENABLE` | `0` | `1` = send RegisterRequest on startup |
-| `AMF_GRPC_REGISTRATION_SERVER_IP` | _(unset)_ | Registration server IP |
-| `AMF_GRPC_REGISTRATION_SERVER_PORT` | _(unset)_ | Registration server TCP port |
+| `AMF_TCP_ENABLE` | `1` | `1` = start health server, `0` = disable |
+| `AMF_TCP_PORT` | `50051` | TCP port to bind |
+| `AMF_TCP_BIND_ADDR` | `0.0.0.0` | IPv4 address to bind |
+| `AMF_TCP_ADVERTISE_IP` | same as BIND_ADDR | IP advertised in HealthCheckResponse + RegisterRequest |
+| `AMF_TCP_REG_ENABLE` | `0` | `1` = send RegisterRequest on startup |
+| `AMF_TCP_REG_SERVER_IP` | _(unset)_ | Registration server IP |
+| `AMF_TCP_REG_SERVER_PORT` | _(unset)_ | Registration server TCP port |
 
 **Example — enable registration:**
 ```yaml
 # docker-compose.yaml, under open5gs-cp environment:
-AMF_GRPC_REGISTRATION_ENABLE: "1"
-AMF_GRPC_REGISTRATION_SERVER_IP: "192.168.1.100"
-AMF_GRPC_REGISTRATION_SERVER_PORT: "9090"
+AMF_TCP_REG_ENABLE: "1"
+AMF_TCP_REG_SERVER_IP: "192.168.1.100"
+AMF_TCP_REG_SERVER_PORT: "9090"
 ```
 
 ### Fork structure
@@ -353,14 +366,14 @@ Patches applied by `Dockerfile.build-all` at build time:
 | BSF | open5gs-bsfd | (not in free5GC) |
 | WebUI | Built-in (Node.js/Next.js) | Separate webui container |
 | Database | MongoDB (subscribers + PCF + BSF) | MongoDB (subscribers only) |
-| UE subnet | 10.45.0.0/16 (ogstun) | 10.60.0.0/24 (upfgtp) |
+| UE subnet | 10.206.0.0/16 (ogstun) | 10.60.0.0/24 (upfgtp) |
 | Config format | YAML | YAML |
 | Docker network | 10.200.100.0/24 | 10.100.200.0/24 |
 | CP IP | 10.200.100.16 | 10.100.200.16 |
 | UPF IP | 10.200.100.17 | 10.100.200.17 |
 | Health check | AMF TCP port 50051 (forked) | AMF TCP port 50051 (forked) |
 | NGAP port | 38412 | 38412 |
-| WebUI port | 9999 | 5000 |
+| WebUI port | 4000 | 5000 |
 
 ---
 
@@ -562,7 +575,7 @@ Test logs are saved to `tests/logs/` with timestamps. See [`tests/README.md`](te
 | Version | v2.7.5 | v4.x |
 | Containers | 5 (MongoDB, CP, UPF, WebUI, UERANSIM) | 5 |
 | Provisioning | Direct MongoDB (`mongosh`) | WebUI REST API |
-| Slice (default) | SST=1, SD=111111 | SST=3, SD=198153 |
-| WebUI | Port 9999, admin/1423 | Port 4000, admin/free5gc |
+| Slice (default) | SST=3, SD=198153 | SST=3, SD=198153 |
+| WebUI | Port 4000, admin/1423 | Port 4000, admin/free5gc |
 | AMF Health Check | ✅ Port 50051 (TCP, custom fork) | ✅ Port 50051 (gRPC, custom fork) |
 | Test suite | ✅ 10 TCs (`tests/`) | ✅ 10 TCs (`tests/`) |
