@@ -25,8 +25,7 @@ DNN="internet"
 AMF_FIELD="8000"
 BASE_K="0c57e15a2cb86087097a6b50d42531de"
 OPC="109ee52735ae6d3849112cf4175029c7"
-AMF_HEALTH_PORT=50051
-AMF_HEALTH_HOST="localhost"
+AMF_CNODE_DEFAULT_PORT=9090
 
 # Auto-detect PLMN from running gNB config inside UERANSIM container
 _detect_plmn() {
@@ -323,61 +322,17 @@ reset_ueransim() {
     sleep 10
 }
 
-# Check AMF TCP health check (port 50051) — returns 0 if SERVING+AMF
-# Parses proto fields: status=1(SERVING), node_type=13(AMF), ip, port
-check_amf_health() {
-    local host="${1:-${AMF_HEALTH_HOST}}"
-    local port="${2:-${AMF_HEALTH_PORT}}"
-    python3 -c "
-import socket, sys, time
+# check_amf_cnode_log() — return 0 if AMF log shows cnode is active.
+# Looks for "[AMF-cnode] connected" or "[AMF-cnode] registered" in the log.
+check_amf_cnode_log() {
+    docker exec open5gs-cp cat /var/log/open5gs/amf.log 2>/dev/null \
+        | grep -q "\[AMF-cnode\]"
+}
 
-def read_varint(data, i):
-    val, shift = 0, 0
-    while i < len(data):
-        b = data[i]; i += 1
-        val |= (b & 0x7F) << shift
-        shift += 7
-        if not (b & 0x80): break
-    return val, i
-
-def parse_proto(data):
-    # skip length prefix varint
-    _, i = read_varint(data, 0)
-    fields = {}
-    while i < len(data):
-        tag_byte = data[i]; i += 1
-        field_num = tag_byte >> 3
-        wire_type = tag_byte & 0x07
-        if wire_type == 0:
-            val, i = read_varint(data, i)
-            fields[field_num] = val
-        elif wire_type == 2:
-            length, i = read_varint(data, i)
-            fields[field_num] = data[i:i+length].decode('utf-8', errors='replace')
-            i += length
-    return fields
-
-try:
-    s = socket.socket()
-    s.settimeout(3)
-    s.connect(('${host}', ${port}))
-    time.sleep(0.6)
-    data = b''
-    s.settimeout(1)
-    try:
-        while True:
-            chunk = s.recv(256)
-            if not chunk: break
-            data += chunk
-    except Exception: pass
-    s.close()
-    fields = parse_proto(data)
-    status    = fields.get(1, 0)
-    node_type = fields.get(2, 0)
-    sys.exit(0 if status == 1 and node_type == 13 else 1)
-except Exception as e:
-    sys.exit(1)
-" 2>/dev/null
+# check_amf_cnode_registered() — return 0 if AMF log shows successful registration.
+check_amf_cnode_registered() {
+    docker exec open5gs-cp cat /var/log/open5gs/amf.log 2>/dev/null \
+        | grep -q "\[AMF-cnode\] registered as AMF"
 }
 
 # Ensure UERANSIM container is running (start if not)
