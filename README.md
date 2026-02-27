@@ -311,6 +311,70 @@ Patches applied by `Dockerfile.build-all` at build time (**two files only**):
 
 No upstream open5GS files are stored in this repo — only the cnode source and the patch script in `Dockerfile.build-all`.
 
+### Testing with the mock server
+
+`tests/cnode_mock_server.py` is a standalone Python server that implements the cnode server side. Use it to test the AMF registration + health-check flow without a real cnode deployment.
+
+#### Quick test (one connection, 3 health checks)
+
+```bash
+# Terminal 1 — start mock server on port 9090
+python3 tests/cnode_mock_server.py --port 9090
+
+# Terminal 2 — start open5gs with cnode pointed at the mock server
+# (add to docker-compose.yaml under open5gs-cp environment, then start)
+AMF_CNODE_SERVER_IP=<host-ip>  AMF_CNODE_SERVER_PORT=9090 ./open5gs.sh start
+```
+
+Expected mock server output:
+```
+[mock cnode server] listening on 0.0.0.0:9090
+[mock cnode server] session 1: connection from 10.200.100.16:xxxxx
+  [server] ✓ NodeType_Message  nodetype=13 (AMF)
+           frame: [02 00 00 00 08 0d]
+  [server] → HealthCheckRequest  frame: [02 00 00 00 0a 00]
+  [server] ← HealthCheckResponse  status=1 (SERVING) ✓
+           frame: [02 00 00 00 08 01]
+  ... (repeated --count times)
+[mock cnode server] session 1: ✅ PASS
+```
+
+#### Test reconnect / backoff
+
+```bash
+# Start server that loops, accepting multiple reconnects
+python3 tests/cnode_mock_server.py --port 9090 --loop --count 2 --interval 1
+
+# Kill and restart the server mid-session to observe AMF reconnect with backoff
+# AMF log will show:
+#   [AMF-cnode] session ended; reconnecting in 1s
+#   [AMF-cnode] connected to <ip>:9090
+#   [AMF-cnode] registered as AMF ...
+```
+
+#### Standalone wire-format test (no Docker needed)
+
+Runs C binary directly against the mock server to verify wire format without a full open5gs build:
+
+```bash
+# Terminal 1
+python3 tests/cnode_mock_server.py --port 9090 --count 1
+
+# Terminal 2 — compile and run the standalone C test client
+gcc -o /tmp/cnode_test tests/cnode_mock_server.py  # (see below — use the C file)
+# or run TC09 which includes a self-contained handshake simulation:
+bash tests/tc09_amf_health_check.sh
+```
+
+#### Mock server options
+
+| Flag | Default | Description |
+|---|---|---|
+| `--port` | `9090` | TCP port to listen on |
+| `--interval` | `2.0` | Seconds between health checks |
+| `--count` | `3` | Health checks per session (`0` = infinite) |
+| `--loop` | off | Keep accepting new connections after disconnect |
+
 ---
 
 ## Comparison: open5GS vs free5GC
