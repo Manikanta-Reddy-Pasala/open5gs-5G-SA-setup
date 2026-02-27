@@ -21,7 +21,7 @@ A fully self-contained 5G Standalone (SA) core network built from source using [
   │ (MongoDB)    │      │  UDR:7786  BSF:7787                           │
   └──────────────┘      │                                               │
                         │  NGAP/SCTP: 38412 (to gNB)                  │
-                        │  TCP Health: 50051  ← forked AMF             │
+                        │  AMF dials OUT → cnode server (no inbound)  │
                         └──────────────┬──────────────────────────────┘
                                        │ PFCP
                         ┌──────────────▼──────────────────────────────┐
@@ -144,7 +144,6 @@ All containers share the `open5gs-net` bridge network (`10.200.100.0/24`, bridge
 | UDM | 7785 | Unified Data Management |
 | UDR | 7786 | Unified Data Repository |
 | BSF | 7787 | Binding Support Function |
-| **AMF Health** | **50051** | **TCP health check (custom fork, see below)** |
 | Metrics | 9090-9093 | Prometheus metrics (AMF/SMF/PCF/UPF) |
 
 ---
@@ -243,106 +242,74 @@ build-output/
 
 ---
 
-## AMF Custom Fork — TCP Health Check & Registration
+## AMF Custom Fork — cnode Registration & Health Check
 
-This repo ships a **forked open5GS AMF** with a TCP health check server and registration client grafted in, wire-format-compatible with the [free5GC custom AMF](../free5gc-5G-SA-setup/NFs/amf/).
+This repo ships a **forked open5GS AMF** with an outbound cnode client grafted in, implementing the same registration + health-check protocol as the working MME (`CnmSendNodeType` / `sendData` / `recvData`).
 
-### How it works
+### Architecture
 
-The fork lives entirely in `NFs/amf/amf-health.c` + `amf-health.h`. The `Dockerfile.build-all` copies these files into the cloned open5GS source tree at build time and patches three existing files via a Python script before the meson/ninja build runs. No upstream files are stored in this repo — only the diff (patch script + new files).
-
-### TCP Health Check Server (port 50051)
-
-Wire-format-compatible with the free5GC AMF health check endpoint.
+The AMF dials **out** to the cnode registration server — there is **no inbound TCP server** on the AMF. Health checks flow back on the same persistent connection:
 
 ```
-Wire protocol (both directions):
-  [varint: N][N bytes: proto-encoded message]
-
-HealthCheckResponse fields:
-  field 1 (status)    varint  SERVING=1 | NOT_SERVING=2
-  field 2 (node_type) varint  AMF=13
-  field 3 (ip)        string  AMF_TCP_ADVERTISE_IP value
-  field 4 (port)      varint  AMF_TCP_PORT value
+AMF  ──(TCP dial)────────────────────►  cnode server
+AMF  ──NodeType_Message { AMF(13) }──►  server registers the AMF
+                                         server sends HealthCheckRequest
+AMF  ◄──────HealthCheckRequest ──────── (same TCP connection)
+AMF  ──────HealthCheckResponse ─────►   { status: SERVING }
+         (reconnects with exponential backoff: 1→2→4→…→30 s)
 ```
 
-- Plain TCP probes (Kubernetes liveness, load balancers) that send nothing receive the response after a 500 ms timeout — no request payload required
-- Clients may optionally send a `HealthCheckRequest { service: "..." }` before reading the response
+### Wire Format
 
-**Test:**
-```bash
-# Plain TCP probe — parse proto response (status + node_type + ip + port)
-python3 -c "
-import socket, time
-s = socket.socket()
-s.connect(('<host>', 50051))
-time.sleep(0.6)
-data = b''
-s.settimeout(1)
-try:
-    while True:
-        chunk = s.recv(256)
-        if not chunk: break
-        data += chunk
-except Exception: pass
-s.close()
-print(data.hex())
-# SERVING example: 0e 08 01 10 0d 1a 0c 31 30 2e 32 30 30 2e 31 30 30 2e 31 36 20 c7 87 03
-# field1=status(1=SERVING), field2=node_type(13=AMF), field3=ip, field4=port(50051)
-"
-```
-
-### Registration Client
-
-On AMF startup (`amf_state_operational` FSM entry), the AMF optionally sends a `RegisterRequest` proto to a configured registration server:
+Matches MME `sendData()` / `recvData()` exactly — **fixed 4-byte LE length header**:
 
 ```
-RegisterRequest {
-  node_type = AMF (13)
-  ip        = <AMF_TCP_ADVERTISE_IP>
-  port      = <AMF_TCP_PORT>
-}
+[ uint32_t payload_length (4 bytes, native little-endian) ][ proto payload ]
 ```
 
-The call is fire-and-forget (detached thread) — it never blocks AMF boot. The server may reply with an optional `RegisterResponse { success, message }`.
+| Message | Direction | Proto bytes | Full frame |
+|---|---|---|---|
+| `NodeType_Message { nodetype: AMF=13 }` | AMF → server | `08 0D` | `02 00 00 00  08 0D` |
+| `HealthCheckRequest { service: "" }` | server → AMF | `0A 00` | `02 00 00 00  0A 00` |
+| `HealthCheckResponse { status: SERVING=1 }` | AMF → server | `08 01` | `02 00 00 00  08 01` |
 
 ### Configuration
 
-All settings are env vars read at startup. Set them in `docker-compose.yaml` under `open5gs-cp.environment`:
+Set env vars in `docker-compose.yaml` under `open5gs-cp.environment`:
 
 | Env var | Default | Description |
 |---|---|---|
-| `AMF_TCP_ENABLE` | `1` | `1` = start health server, `0` = disable |
-| `AMF_TCP_PORT` | `50051` | TCP port to bind |
-| `AMF_TCP_BIND_ADDR` | `0.0.0.0` | IPv4 address to bind |
-| `AMF_TCP_ADVERTISE_IP` | same as BIND_ADDR | IP advertised in HealthCheckResponse + RegisterRequest |
-| `AMF_TCP_REG_ENABLE` | `0` | `1` = send RegisterRequest on startup |
-| `AMF_TCP_REG_SERVER_IP` | _(unset)_ | Registration server IP |
-| `AMF_TCP_REG_SERVER_PORT` | _(unset)_ | Registration server TCP port |
+| `AMF_CNODE_ENABLE` | `1` | `1` = enabled, any other value = disabled |
+| `AMF_CNODE_SERVER_IP` | _(unset)_ | cnode server IPv4 — **required to activate** |
+| `AMF_CNODE_SERVER_PORT` | `9090` | cnode server TCP port |
 
-**Example — enable registration:**
+If `AMF_CNODE_SERVER_IP` is unset the client is silently disabled and AMF starts normally.
+
+**Example:**
 ```yaml
 # docker-compose.yaml, under open5gs-cp environment:
-AMF_TCP_REG_ENABLE: "1"
-AMF_TCP_REG_SERVER_IP: "192.168.1.100"
-AMF_TCP_REG_SERVER_PORT: "9090"
+AMF_CNODE_ENABLE: "1"
+AMF_CNODE_SERVER_IP: "192.168.1.100"
+AMF_CNODE_SERVER_PORT: "9090"
 ```
 
 ### Fork structure
 
 ```
 NFs/amf/
-├── amf-health.h     # Public API (amf_health_open/close/send_registration)
-└── amf-health.c     # Full implementation (TCP server + registration client)
+└── cnode/
+    ├── amf_cnode.h   # Public API: amf_cnode_start() / amf_cnode_stop()
+    └── amf_cnode.c   # Outbound client: dial, NodeType_Message, poll loop, backoff
 ```
 
-Patches applied by `Dockerfile.build-all` at build time:
+Patches applied by `Dockerfile.build-all` at build time (**two files only**):
 
 | File | Change |
 |---|---|
-| `src/amf/meson.build` | Add `amf-health.c` to sources + `dependency('threads')` |
-| `src/amf/init.c` | Call `amf_health_open()` after `ngap_open()`; `amf_health_close()` in terminate |
-| `src/amf/amf-sm.c` | Call `amf_health_send_registration()` in `amf_state_operational` `OGS_FSM_ENTRY_SIG` |
+| `src/amf/meson.build` | Add `cnode/amf_cnode.c` to sources + `dependency('threads')` |
+| `src/amf/init.c` | `#include "cnode/amf_cnode.h"`; call `amf_cnode_start()` on init, `amf_cnode_stop()` on terminate |
+
+No upstream open5GS files are stored in this repo — only the cnode source and the patch script in `Dockerfile.build-all`.
 
 ---
 
@@ -371,7 +338,7 @@ Patches applied by `Dockerfile.build-all` at build time:
 | Docker network | 10.200.100.0/24 | 10.100.200.0/24 |
 | CP IP | 10.200.100.16 | 10.100.200.16 |
 | UPF IP | 10.200.100.17 | 10.100.200.17 |
-| Health check | AMF TCP port 50051 (forked) | AMF TCP port 50051 (forked) |
+| Health check | AMF cnode outbound client (forked) | AMF cnode outbound client (forked) |
 | NGAP port | 38412 | 38412 |
 | WebUI port | 4000 | 5000 |
 
@@ -484,8 +451,9 @@ open5gs-5G-SA-setup/
 ├── Dockerfile.ueransim-local   # UERANSIM runtime image
 ├── NFs/
 │   └── amf/
-│       ├── amf-health.h        # AMF fork: TCP health check API header
-│       └── amf-health.c        # AMF fork: TCP health server + registration client
+│       └── cnode/
+│           ├── amf_cnode.h     # AMF fork: cnode client API header
+│           └── amf_cnode.c     # AMF fork: outbound registration + health-check client
 ├── consolidated/
 │   ├── start-cp-nfs.sh         # CP startup script (all 10 NFs)
 │   └── start-upf.sh            # UPF startup + TUN setup
@@ -558,10 +526,10 @@ bash tests/tc09_amf_health_check.sh
 | TC06 | UE Context Release | Ungraceful (RLF) + graceful deregister |
 | TC07 | RAN Config Update | TAC change: gNB reconnects with new TAC |
 | TC08 | NG Reset | gNB graceful restart + forced kill recovery |
-| **TC09** | **AMF Health Check** | **TCP port 50051 returns SERVING (0x020801)** |
+| **TC09** | **AMF cnode** | **AMF connects to cnode server, registers, responds SERVING** |
 | TC10 | Memory / Stability | Register/deregister cycles, memory growth < 20% |
 
-> **TC09 is unique to this deployment** — it validates the custom AMF fork's TCP health check server. See [AMF Custom Fork](#amf-custom-fork--tcp-health-check--registration) for details.
+> **TC09 is unique to this deployment** — it validates the custom AMF fork's cnode outbound registration + health-check client. See [AMF Custom Fork](#amf-custom-fork--cnode-registration--health-check) for details.
 
 Test logs are saved to `tests/logs/` with timestamps. See [`tests/README.md`](tests/README.md) for full documentation.
 
@@ -577,5 +545,5 @@ Test logs are saved to `tests/logs/` with timestamps. See [`tests/README.md`](te
 | Provisioning | Direct MongoDB (`mongosh`) | WebUI REST API |
 | Slice (default) | SST=3, SD=198153 | SST=3, SD=198153 |
 | WebUI | Port 4000, admin/1423 | Port 4000, admin/free5gc |
-| AMF Health Check | ✅ Port 50051 (TCP, custom fork) | ✅ Port 50051 (gRPC, custom fork) |
+| AMF Health Check | ✅ cnode outbound client (custom fork) | ✅ cnode outbound client (custom fork) |
 | Test suite | ✅ 10 TCs (`tests/`) | ✅ 10 TCs (`tests/`) |
