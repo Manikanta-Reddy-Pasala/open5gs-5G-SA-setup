@@ -6,13 +6,13 @@ logger:
 upf:
   pfcp:
     server:
-      - address: 0.0.0.0
-    client:
-      smf:
-        - address: open5gs-cp
+      # Bind to specific container IP — avoids loopback IPC interference on 127.0.0.1:8805
+      - address: 10.200.100.17
   gtpu:
     server:
-      - address: 0.0.0.0
+      # Bind to specific container IP so UPF reports 10.200.100.17 as its N3 GTP-U endpoint
+      # in PFCP Session Establishment Response → SMF passes this to gNB in NGAP transfer.
+      - address: 10.200.100.17
   session:
     - subnet: 10.206.0.0/16
       gateway: 10.206.0.1

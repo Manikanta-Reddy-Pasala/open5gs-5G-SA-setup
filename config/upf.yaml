@@ -6,13 +6,18 @@ logger:
 upf:
   pfcp:
     server:
-      - address: 0.0.0.0
-    client:
-      smf:
-        - address: open5gs-cp
+      # Bind to specific container IP (not 0.0.0.0) so the PFCP socket does NOT
+      # also receive loopback (127.0.0.1:8805) IPC traffic from open5GS threads,
+      # which would confuse the PFCP heartbeat state machine and trigger spurious
+      # de-association cycles.
+      - address: 10.200.100.17
   gtpu:
     server:
-      - address: 0.0.0.0
+      # Bind to specific container IP so UPF reports 10.200.100.17 as its N3 GTP-U endpoint
+      # in PFCP Session Establishment Response → SMF passes this to gNB in NGAP PDU Session
+      # Resource Setup Request Transfer.  With 0.0.0.0 the gNB receives IPv4[0.0.0.0] and
+      # never sends uplink GTP-U, causing 100% packet loss despite the PDU session being active.
+      - address: 10.200.100.17
   session:
     - subnet: 10.206.0.0/16
       gateway: 10.206.0.1

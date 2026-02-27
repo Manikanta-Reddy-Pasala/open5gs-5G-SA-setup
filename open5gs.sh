@@ -175,9 +175,11 @@ update_slice_config() {
     sed -i "s/sst: [0-9]*/sst: ${sst}/g"   "${cfg_dir}/amf.yaml"
     sed -i "s/sd: [0-9a-fA-F]*/sd: ${sd}/g" "${cfg_dir}/amf.yaml"
 
-    # SMF / NSSF: sst only (no SD in these configs)
+    # SMF info + NSSF nsi: sst and sd (decimal, no prefix)
     sed -i "s/sst: [0-9]*/sst: ${sst}/g" "${cfg_dir}/smf.yaml"
+    sed -i "s/sd: [0-9a-fA-F]*/sd: ${sd}/g" "${cfg_dir}/smf.yaml"
     sed -i "s/sst: [0-9]*/sst: ${sst}/g" "${cfg_dir}/nssf.yaml"
+    sed -i "s/sd: [0-9a-fA-F]*/sd: ${sd}/g" "${cfg_dir}/nssf.yaml"
 
     # gNB + UE: sst (int) + sd (0x hex prefix)
     sed -i "s/sst: [0-9]*/sst: ${sst}/g"         "${cfg_dir}/gnb.yaml"
@@ -302,8 +304,12 @@ cmd_start() {
     log "Waiting for Control Plane to be healthy..."
     wait_healthy "open5gs-cp" 120
 
-    log "Starting UPF..."
-    CONFIG_DIR="$cfg_dir" docker compose -f "$COMPOSE_FILE" up -d open5gs-upf
+    log "Starting UPF (fresh start to ensure clean PFCP association with SMF)..."
+    # Always force-recreate UPF so it starts with no stale PFCP state.
+    # SMF (in the CP) initiates PFCP; if UPF holds an old association from a
+    # previous SMF run it will reject SMF's new Association Setup Request,
+    # blocking all PDU session establishment.
+    CONFIG_DIR="$cfg_dir" docker compose -f "$COMPOSE_FILE" up -d --force-recreate open5gs-upf
 
     log "Starting WebUI (port ${WEBUI_PORT})..."
     CONFIG_DIR="$cfg_dir" docker compose -f "$COMPOSE_FILE" up -d open5gs-webui

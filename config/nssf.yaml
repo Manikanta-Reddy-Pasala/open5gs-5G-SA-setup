@@ -15,3 +15,4 @@ nssf:
         - uri: http://127.0.0.1:7777
           s_nssai:
             sst: 3
+            sd: 198153

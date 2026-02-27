@@ -147,6 +147,7 @@ services:
       - "/dev/net/tun"
     networks:
       open5gs-net:
+        ipv4_address: 10.200.100.4
         aliases:
           - gnb.open5gs.org
     depends_on:

@@ -5,8 +5,8 @@ idLength: 32
 tac: 1
 
 linkIp: 0.0.0.0
-ngapIp: 0.0.0.0
-gtpIp: 0.0.0.0
+ngapIp: 10.200.100.4
+gtpIp: 10.200.100.4
 
 amfConfigs:
   - address: open5gs-cp

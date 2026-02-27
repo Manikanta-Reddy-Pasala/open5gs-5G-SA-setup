@@ -13,7 +13,8 @@ smf:
         - uri: http://127.0.0.1:7778
   pfcp:
     server:
-      - address: 0.0.0.0
+      # Bind to specific CP container IP — avoids loopback IPC interference on 127.0.0.1:8805
+      - address: 10.200.100.16
     client:
       upf:
         - address: 10.200.100.17
@@ -37,5 +38,6 @@ smf:
   info:
     - s_nssai:
         - sst: 3
+          sd: 198153
           dnn:
             - internet
