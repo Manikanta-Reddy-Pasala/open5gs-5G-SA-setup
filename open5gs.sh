@@ -553,12 +553,12 @@ except:
 
     echo ""
     echo "${BOLD}PLMN Configuration:${NC}"
-    # Detect PLMNs from AMF config (supports multiple PLMNs)
+    # Detect PLMNs from AMF config on host (supports multiple PLMNs)
     local amf_plmns
-    amf_plmns=$(docker exec open5gs-cp python3 - <<'PYEOF' 2>/dev/null
+    amf_plmns=$(python3 - <<'PYEOF' 2>/dev/null
 import yaml, sys
 try:
-    with open('/etc/open5gs/amf.yaml') as f:
+    with open('config/amf.yaml') as f:
         cfg = yaml.safe_load(f)
     plmns = cfg.get('amf', {}).get('plmn_support', [])
     tais = cfg.get('amf', {}).get('tai', [])
@@ -568,8 +568,8 @@ try:
     result = []
     for p in plmns:
         plmn_id = p.get('plmn_id', {})
-        mcc = str(plmn_id.get('mcc', '???'))
-        mnc = str(plmn_id.get('mnc', '??'))
+        mcc = str(plmn_id.get('mcc', '???')).zfill(3)
+        mnc = str(plmn_id.get('mnc', '??')).zfill(2)
         key = f"{mcc}-{mnc}"
         if key not in seen:
             seen.add(key)
@@ -585,8 +585,8 @@ try:
     tac_map = {}
     for t in tais:
         plmn_id = t.get('plmn_id', {})
-        mcc = str(plmn_id.get('mcc', '???'))
-        mnc = str(plmn_id.get('mnc', '??'))
+        mcc = str(plmn_id.get('mcc', '???')).zfill(3)
+        mnc = str(plmn_id.get('mnc', '??')).zfill(2)
         tac = t.get('tac', '?')
         key = f"{mcc}-{mnc}"
         if key not in tac_map:

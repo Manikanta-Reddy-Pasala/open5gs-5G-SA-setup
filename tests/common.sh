@@ -47,15 +47,15 @@ _detect_plmn() {
     # Detect all PLMNs from AMF config (multi-PLMN support)
     AMF_PLMNS=()
     local amf_plmn_data
-    amf_plmn_data=$(docker exec open5gs-cp python3 - <<'PYEOF' 2>/dev/null
+    amf_plmn_data=$(python3 - "$CONFIG_DIR/amf.yaml" <<'PYEOF' 2>/dev/null
 import yaml, sys
 try:
-    with open('/etc/open5gs/amf.yaml') as f:
+    with open(sys.argv[1]) as f:
         cfg = yaml.safe_load(f)
     for p in cfg.get('amf', {}).get('plmn_support', []):
         pid = p.get('plmn_id', {})
-        mcc = str(pid.get('mcc', ''))
-        mnc = str(pid.get('mnc', ''))
+        mcc = str(pid.get('mcc', '')).zfill(3)
+        mnc = str(pid.get('mnc', '')).zfill(2)
         if mcc and mnc:
             print(f"{mcc}|{mnc}")
 except Exception:
