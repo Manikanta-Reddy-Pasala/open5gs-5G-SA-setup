@@ -27,7 +27,9 @@ BASE_K="0c57e15a2cb86087097a6b50d42531de"
 OPC="109ee52735ae6d3849112cf4175029c7"
 AMF_CNODE_DEFAULT_PORT=9090
 
-# Auto-detect PLMN from running gNB config inside UERANSIM container
+# Auto-detect PLMN from running gNB config inside UERANSIM container.
+# Also populates AMF_PLMNS array with all PLMNs from the AMF config
+# (supports multi-PLMN deployments).
 _detect_plmn() {
     local gnb_cfg
     gnb_cfg=$(docker exec open5gs-ueransim cat ./config/gnb.yaml 2>/dev/null)
@@ -41,6 +43,30 @@ _detect_plmn() {
     PLMN="${MCC}${MNC}"
     # BASE_SUPI: last 10 digits are the MSIN part
     BASE_SUPI="${MCC}${MNC}0000050641"
+
+    # Detect all PLMNs from AMF config (multi-PLMN support)
+    AMF_PLMNS=()
+    local amf_plmn_data
+    amf_plmn_data=$(docker exec open5gs-cp python3 - <<'PYEOF' 2>/dev/null
+import yaml, sys
+try:
+    with open('/etc/open5gs/amf.yaml') as f:
+        cfg = yaml.safe_load(f)
+    for p in cfg.get('amf', {}).get('plmn_support', []):
+        pid = p.get('plmn_id', {})
+        mcc = str(pid.get('mcc', ''))
+        mnc = str(pid.get('mnc', ''))
+        if mcc and mnc:
+            print(f"{mcc}|{mnc}")
+except Exception:
+    pass
+PYEOF
+)
+    while IFS='|' read -r amf_mcc amf_mnc; do
+        [ -n "$amf_mcc" ] && AMF_PLMNS+=("${amf_mcc}${amf_mnc}")
+    done <<< "$amf_plmn_data"
+    # Fall back to gNB PLMN if AMF config not reachable
+    [ "${#AMF_PLMNS[@]}" -eq 0 ] && AMF_PLMNS=("${PLMN}")
 }
 _detect_plmn
 

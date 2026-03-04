@@ -10,7 +10,8 @@
 #   ./open5gs.sh start                # Start core (without UERANSIM)
 #   ./open5gs.sh start --ueransim     # Start core + UERANSIM simulator
 #   ./open5gs.sh start --debug        # Start with debug-level logging
-#   ./open5gs.sh start --mcc 404 --mnc 30 --tac 1  # Custom PLMN
+#   ./open5gs.sh start --mcc 404 --mnc 30 --tac 1  # Custom single PLMN
+#   ./open5gs.sh start --plmn 404:30 --plmn 404:20 --tac 1  # Multi-PLMN
 #   ./open5gs.sh start --sst 1 --sd 111111          # Custom slice
 #   ./open5gs.sh provision            # Provision default subscriber
 #   ./open5gs.sh bulk-provision --count 10  # Provision 10 subscribers
@@ -165,6 +166,101 @@ update_plmn_config() {
     log "  PLMN updated in config files"
 }
 
+update_plmn_config_multi() {
+    # Args: tac cfg_dir MCC1:MNC1 [MCC2:MNC2 ...]
+    local tac="$1"
+    local cfg_dir="$2"
+    shift 2
+    local plmns=("$@")
+
+    log "Updating multi-PLMN config: TAC=${tac} PLMNs: ${plmns[*]} in ${cfg_dir}/"
+
+    # Update AMF config (guami / tai / plmn_support) using Python for safe YAML rewrite
+    python3 - "${cfg_dir}/amf.yaml" "$tac" "${plmns[@]}" <<'PYEOF'
+import sys, re
+
+cfg_file = sys.argv[1]
+tac      = sys.argv[2]
+plmns    = []
+for arg in sys.argv[3:]:
+    parts = arg.split(':')
+    mcc, mnc = parts[0].strip(), parts[1].strip()
+    plmns.append((mcc, mnc))
+
+with open(cfg_file) as f:
+    content = f.read()
+
+# Extract existing sst/sd values to preserve slice config
+sst_m = re.search(r'(?m)^\s+- sst:\s*(\d+)', content)
+sd_m  = re.search(r'(?m)^\s+sd:\s*([0-9a-fA-F]+)', content)
+sst = sst_m.group(1) if sst_m else '3'
+sd  = sd_m.group(1)  if sd_m  else '198153'
+
+def build_guami(plmns):
+    lines = ['  guami:']
+    for mcc, mnc in plmns:
+        lines += [
+            '    - plmn_id:',
+            f'        mcc: {mcc}',
+            f'        mnc: {mnc}',
+            '      amf_id:',
+            '        region: 2',
+            '        set: 1',
+        ]
+    return '\n'.join(lines)
+
+def build_tai(plmns, tac):
+    lines = ['  tai:']
+    for mcc, mnc in plmns:
+        lines += [
+            '    - plmn_id:',
+            f'        mcc: {mcc}',
+            f'        mnc: {mnc}',
+            f'      tac: {tac}',
+        ]
+    return '\n'.join(lines)
+
+def build_plmn_support(plmns, sst, sd):
+    lines = ['  plmn_support:']
+    for mcc, mnc in plmns:
+        lines += [
+            '    - plmn_id:',
+            f'        mcc: {mcc}',
+            f'        mnc: {mnc}',
+            '      s_nssai:',
+            f'        - sst: {sst}',
+            f'          sd: {sd}',
+        ]
+    return '\n'.join(lines)
+
+def replace_section(content, key, new_block):
+    # Match "  key:" and everything until the next 2-space-indented key or end-of-file
+    pattern = rf'  {key}:.*?(?=\n  [a-z_]|\Z)'
+    return re.sub(pattern, new_block, content, flags=re.DOTALL)
+
+content = replace_section(content, 'guami',        build_guami(plmns))
+content = replace_section(content, 'tai',          build_tai(plmns, tac))
+content = replace_section(content, 'plmn_support', build_plmn_support(plmns, sst, sd))
+
+with open(cfg_file, 'w') as f:
+    f.write(content)
+
+print(f"  Updated {cfg_file}: {len(plmns)} PLMN(s), TAC={tac}")
+PYEOF
+
+    # Update gNB + UE config with the FIRST PLMN's MCC/MNC (single gNB)
+    local first_mcc="${plmns[0]%%:*}"
+    local first_mnc="${plmns[0]##*:}"
+    sed -i "s/mcc: '[0-9]*/mcc: '${first_mcc}/g" "${cfg_dir}/gnb.yaml"
+    sed -i "s/mnc: '[0-9]*/mnc: '${first_mnc}/g" "${cfg_dir}/gnb.yaml"
+    sed -i "s/tac: [0-9]*/tac: ${tac}/g"           "${cfg_dir}/gnb.yaml"
+    sed -i "s/mcc: '[0-9]*/mcc: '${first_mcc}/g" "${cfg_dir}/ue.yaml"
+    sed -i "s/mnc: '[0-9]*/mnc: '${first_mnc}/g" "${cfg_dir}/ue.yaml"
+
+    MCC="$first_mcc"; MNC="$first_mnc"; TAC="$tac"
+    log "  Multi-PLMN update complete"
+}
+
 update_slice_config() {
     local sst="$1" sd="$2"
     local cfg_dir="${3:-config}"
@@ -252,16 +348,18 @@ cmd_start() {
     local debug_mode=false
     local custom_mcc="" custom_mnc="" custom_tac=""
     local custom_sst="" custom_sd=""
+    local custom_plmns=()
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --ueransim) with_ueransim=true ;;
             --debug)    debug_mode=true ;;
-            --mcc)      custom_mcc="$2";  shift ;;
-            --mnc)      custom_mnc="$2";  shift ;;
-            --tac)      custom_tac="$2";  shift ;;
-            --sst)      custom_sst="$2";  shift ;;
-            --sd)       custom_sd="$2";   shift ;;
+            --mcc)      custom_mcc="$2";               shift ;;
+            --mnc)      custom_mnc="$2";               shift ;;
+            --tac)      custom_tac="$2";               shift ;;
+            --sst)      custom_sst="$2";               shift ;;
+            --sd)       custom_sd="$2";                shift ;;
+            --plmn)     custom_plmns+=("$2");          shift ;;
         esac
         shift
     done
@@ -272,7 +370,14 @@ cmd_start() {
         log "Using DEBUG logging (config-debug/)"
     fi
 
-    if [ -n "$custom_mcc" ] || [ -n "$custom_mnc" ] || [ -n "$custom_tac" ]; then
+    if [ "${#custom_plmns[@]}" -gt 0 ]; then
+        # Multi-PLMN mode: --plmn MCC:MNC [--plmn MCC2:MNC2 ...] [--tac TAC]
+        update_plmn_config_multi \
+            "${custom_tac:-$TAC}" \
+            "$cfg_dir" \
+            "${custom_plmns[@]}"
+    elif [ -n "$custom_mcc" ] || [ -n "$custom_mnc" ] || [ -n "$custom_tac" ]; then
+        # Single PLMN mode: --mcc X --mnc Y --tac Z
         update_plmn_config \
             "${custom_mcc:-$MCC}" \
             "${custom_mnc:-$MNC}" \
@@ -444,6 +549,95 @@ except:
         ok "GTP-U DNAT  :${GTPU_PORT}    active  -> ${UPF_CUR_IP}:${GTPU_PORT}"
     else
         log "  ℹ GTP-U DNAT  :${GTPU_PORT}    not set  (only needed for external gNB)"
+    fi
+
+    echo ""
+    echo "${BOLD}PLMN Configuration:${NC}"
+    # Detect PLMNs from AMF config (supports multiple PLMNs)
+    local amf_plmns
+    amf_plmns=$(docker exec open5gs-cp python3 - <<'PYEOF' 2>/dev/null
+import yaml, sys
+try:
+    with open('/etc/open5gs/amf.yaml') as f:
+        cfg = yaml.safe_load(f)
+    plmns = cfg.get('amf', {}).get('plmn_support', [])
+    tais = cfg.get('amf', {}).get('tai', [])
+
+    # Collect all PLMNs from plmn_support (main list)
+    seen = set()
+    result = []
+    for p in plmns:
+        plmn_id = p.get('plmn_id', {})
+        mcc = str(plmn_id.get('mcc', '???'))
+        mnc = str(plmn_id.get('mnc', '??'))
+        key = f"{mcc}-{mnc}"
+        if key not in seen:
+            seen.add(key)
+            s_nssai = p.get('s_nssai', [])
+            slices = []
+            for s in s_nssai:
+                sst = s.get('sst', '?')
+                sd = s.get('sd')
+                slices.append(f"SST={sst}" + (f" SD={sd}" if sd else ""))
+            result.append((mcc, mnc, ', '.join(slices) if slices else 'no slices'))
+
+    # Collect TACs per PLMN from tai list
+    tac_map = {}
+    for t in tais:
+        plmn_id = t.get('plmn_id', {})
+        mcc = str(plmn_id.get('mcc', '???'))
+        mnc = str(plmn_id.get('mnc', '??'))
+        tac = t.get('tac', '?')
+        key = f"{mcc}-{mnc}"
+        if key not in tac_map:
+            tac_map[key] = []
+        tac_map[key].append(str(tac))
+
+    # Print results
+    for mcc, mnc, slices in result:
+        key = f"{mcc}-{mnc}"
+        tacs = tac_map.get(key, [])
+        tac_str = ', '.join(tacs) if tacs else '?'
+        print(f"{mcc}|{mnc}|{tac_str}|{slices}")
+except Exception as e:
+    print(f"error|{e}", file=sys.stderr)
+    sys.exit(1)
+PYEOF
+)
+    if [ -n "$amf_plmns" ]; then
+        local count=0
+        while IFS='|' read -r mcc mnc tacs slices; do
+            count=$((count + 1))
+            if [ $count -eq 1 ]; then
+                printf "  %-6s %-6s %-12s %s\n" "MCC" "MNC" "TAC(s)" "Slices"
+                echo "  ────────────────────────────────────────────────"
+            fi
+            printf "  %-6s %-6s %-12s %s\n" "$mcc" "$mnc" "$tacs" "$slices"
+        done <<< "$amf_plmns"
+        if [ $count -eq 0 ]; then
+            log "  No PLMNs configured in AMF"
+        fi
+    else
+        log "  Could not read AMF config (container not running?)"
+    fi
+
+    # Show gNB PLMN if UERANSIM is running
+    if docker inspect "open5gs-ueransim" >/dev/null 2>&1; then
+        local gnb_state
+        gnb_state=$(docker inspect --format='{{.State.Status}}' "open5gs-ueransim" 2>/dev/null)
+        if [ "$gnb_state" = "running" ]; then
+            echo ""
+            log "  gNB (UERANSIM):"
+            local gnb_cfg
+            gnb_cfg=$(docker exec open5gs-ueransim cat ./config/gnb.yaml 2>/dev/null)
+            if [ -n "$gnb_cfg" ]; then
+                local gnb_mcc gnb_mnc gnb_tac
+                gnb_mcc=$(echo "$gnb_cfg" | grep '^mcc:' | head -1 | awk '{print $2}' | tr -d "'\"")
+                gnb_mnc=$(echo "$gnb_cfg" | grep '^mnc:' | head -1 | awk '{print $2}' | tr -d "'\"")
+                gnb_tac=$(echo "$gnb_cfg" | grep '^tac:' | head -1 | awk '{print $2}' | tr -d "'\"")
+                log "    MCC=${gnb_mcc:-?} MNC=${gnb_mnc:-?} TAC=${gnb_tac:-?}"
+            fi
+        fi
     fi
 
     echo ""
@@ -687,7 +881,8 @@ cmd_help() {
     echo "    start                     Start core network"
     echo "    start --ueransim          Start core + UERANSIM gNB"
     echo "    start --debug             Start with debug logging"
-    echo "    start --mcc X --mnc Y --tac Z  Custom PLMN"
+    echo "    start --mcc X --mnc Y --tac Z  Custom single PLMN"
+    echo "    start --plmn MCC:MNC [--plmn MCC2:MNC2] [--tac Z]  Multi-PLMN"
     echo "    start --sst X --sd Y           Custom slice (SST/SD)"
     echo "    stop                      Stop all containers"
     echo "    remove                    Remove containers + volumes"

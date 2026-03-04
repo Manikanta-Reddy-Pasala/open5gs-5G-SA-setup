@@ -81,7 +81,8 @@ A fully self-contained 5G Standalone (SA) core network built from source using [
 | `./open5gs.sh start` | Start core (MongoDB + CP + UPF + WebUI) |
 | `./open5gs.sh start --ueransim` | Start core + UERANSIM gNB simulator |
 | `./open5gs.sh start --debug` | Start with debug-level logging |
-| `./open5gs.sh start --mcc 404 --mnc 30 --tac 1` | Start with custom PLMN |
+| `./open5gs.sh start --mcc 404 --mnc 30 --tac 1` | Start with custom single PLMN |
+| `./open5gs.sh start --plmn 404:30 --plmn 404:20 --tac 1` | Start with multiple PLMNs |
 | `./open5gs.sh start --sst 1 --sd 111111` | Start with custom slice (SST/SD) |
 | `./open5gs.sh stop` | Stop all containers |
 | `./open5gs.sh remove` | Remove all containers and volumes |
@@ -405,6 +406,126 @@ bash tests/tc09_amf_health_check.sh
 | Health check | AMF cnode outbound client (forked) | AMF cnode outbound client (forked) |
 | NGAP port | 38412 | 38412 |
 | WebUI port | 4000 | 5000 |
+
+---
+
+## Multi-PLMN Configuration
+
+open5GS AMF natively supports multiple PLMNs. Each PLMN gets its own entry in `guami`, `tai`, and `plmn_support`.
+
+### Via command line (runtime override)
+
+```bash
+# Single PLMN (original behaviour)
+./open5gs.sh start --mcc 001 --mnc 01 --tac 1
+
+# Multiple PLMNs sharing the same TAC
+./open5gs.sh start --plmn 001:01 --plmn 404:30 --tac 1
+
+# Multiple PLMNs + custom slice
+./open5gs.sh start --plmn 001:01 --plmn 404:30 --tac 1 --sst 1 --sd 111111
+```
+
+`--plmn MCC:MNC` can be repeated as many times as needed. All PLMNs share the same TAC and slice. The gNB (`config/gnb.yaml`) and UE (`config/ue.yaml`) are updated to use the **first** PLMN's MCC/MNC.
+
+### Via config file (permanent)
+
+Edit `config/amf.yaml` and uncomment/add entries in each of the three sections:
+
+```yaml
+guami:
+  - plmn_id: { mcc: 001, mnc: 01 }
+    amf_id:  { region: 2, set: 1 }
+  - plmn_id: { mcc: 404, mnc: 30 }
+    amf_id:  { region: 2, set: 1 }
+tai:
+  - plmn_id: { mcc: 001, mnc: 01 }
+    tac: 1
+  - plmn_id: { mcc: 404, mnc: 30 }
+    tac: 1
+plmn_support:
+  - plmn_id: { mcc: 001, mnc: 01 }
+    s_nssai: [{ sst: 3, sd: 198153 }]
+  - plmn_id: { mcc: 404, mnc: 30 }
+    s_nssai: [{ sst: 3, sd: 198153 }]
+```
+
+Verify with `./open5gs.sh status` — the PLMN Configuration table lists all configured PLMNs:
+
+```
+PLMN Configuration:
+  MCC    MNC    TAC(s)       Slices
+  ────────────────────────────────────────────────
+  001    01     1            SST=3 SD=198153
+  404    30     1            SST=3 SD=198153
+```
+
+---
+
+## Testing with the VM (cnode cross-test)
+
+The `tests/cnode_mock_server.py` works with both **open5GS** (this repo) and the **free5GC fork** running on the dedicated VM at `135.181.93.114`. Both AMF implementations use the same wire format, so the mock server can be used to validate either.
+
+### Option A — Local mock server, open5GS AMF
+
+```bash
+# Start mock server on the local host
+python3 tests/cnode_mock_server.py --port 9090 --loop --count 5
+
+# In docker-compose.yaml, under open5gs-cp > environment, set:
+#   AMF_CNODE_SERVER_IP: "<your-host-ip>"   # e.g. 10.200.100.1
+#   AMF_CNODE_SERVER_PORT: "9090"
+./open5gs.sh start
+```
+
+Expected output: see [Testing with the mock server](#testing-with-the-mock-server).
+
+### Option B — Mock server on VM, free5GC AMF
+
+```bash
+# Copy mock server to VM
+scp -i ~/.ssh/id_ed25519 tests/cnode_mock_server.py root@135.181.93.114:/tmp/
+
+# SSH to VM and start mock server
+ssh -i ~/.ssh/id_ed25519 root@135.181.93.114 \
+    "python3 /tmp/cnode_mock_server.py --port 9090 --loop --count 5"
+
+# On the VM, set env vars in docker-compose and restart free5gc:
+#   AMF_CNODE_ENABLE=1
+#   AMF_CNODE_SERVER_IP=127.0.0.1
+#   AMF_CNODE_SERVER_PORT=9090
+```
+
+### Option C — Local open5GS AMF → mock server on VM
+
+Point the local open5GS AMF at a mock server running on the remote VM:
+
+```bash
+# 1. Start mock server on VM (listening on all interfaces)
+ssh -i ~/.ssh/id_ed25519 root@135.181.93.114 \
+    "python3 /tmp/cnode_mock_server.py --port 9090 --loop --count 10" &
+
+# 2. Configure open5gs AMF to dial the VM
+#    In docker-compose.yaml under open5gs-cp > environment:
+#      AMF_CNODE_SERVER_IP: "135.181.93.114"
+#      AMF_CNODE_SERVER_PORT: "9090"
+./open5gs.sh start
+```
+
+### Run TC09 for automated cross-stack verification
+
+TC09 (`tests/tc09_amf_health_check.sh`) includes a self-contained wire-format handshake simulation that works regardless of which AMF is under test:
+
+```bash
+# Against open5GS AMF (local)
+bash tests/tc09_amf_health_check.sh
+
+# Check cnode log from either deployment
+docker exec open5gs-cp cat /var/log/open5gs/amf.log | grep '\[AMF-cnode\]'
+# Or on VM:
+ssh -i ~/.ssh/id_ed25519 root@135.181.93.114 \
+    "docker exec free5gc-cp cat /var/log/free5gc/amf.log | grep 'AMF-cnode'"
+```
 
 ---
 
