@@ -41,7 +41,7 @@ bash tc10_memory_leak.sh 20 5            # 20 cycles, 5 UEs
 | TC06 | `tc06_ue_context_release.sh` | RLF (kill) + graceful deregister | — |
 | TC07 | `tc07_ran_config_update.sh` | TAC change + gNB reconnect | — |
 | TC08 | `tc08_ng_reset.sh` | NG Reset (graceful + forced) | — |
-| TC09 | `tc09_amf_health_check.sh` | AMF cnode outbound registration + health check | — |
+| TC09 | `tc09_amf_health_check.sh` | AMF TCP health check on port 50051 | — |
 | TC10 | `tc10_memory_leak.sh` | Register/deregister memory stability | 10 cycles, 3 UEs |
 
 ## Test Details
@@ -81,15 +81,17 @@ Reads current TAC from gnb.yaml, increments it, updates both AMF config and gNB 
 
 **Phase 2** (forced): Kill nr-gnb with `pkill -9`, restart container, verify recovery.
 
-### TC09 — AMF cnode Registration & Health Check ⭐
-Tests the custom AMF outbound cnode client (fork-specific feature):
+### TC09 — AMF TCP Health Check ⭐
+Tests the custom AMF TCP health check server (fork-specific feature):
 
-1. Verifies `AMF_CNODE_ENABLE` env var is set
-2. Checks AMF log for `[AMF-cnode]` messages
-3. **Wire-format handshake**: Runs mock cnode server, verifies AMF sends `NodeType_Message { AMF=13 }` registration, receives `HealthCheckRequest`, responds `HealthCheckResponse { SERVING }`
-4. If `AMF_CNODE_SERVER_IP` is set: verifies live registration in AMF log
+1. Verifies `AMF_GRPC_ENABLE=1` env var
+2. Checks port 50051 is listening in container
+3. **Plain probe**: Connect, recv → expects `0x020801` (SERVING)
+4. **Full protocol**: Send `HealthCheckRequest{}` (length-prefixed empty proto), verify SERVING response
+5. Checks AMF log for health server startup message
+6. **Concurrency**: 5 simultaneous connections — all must return SERVING
 
-Wire format (open5GS C): `[uint32_t LE 4-byte length][proto payload]`
+Wire format: `[varint:N][proto-bytes]` where SERVING = `0x02 0x08 0x01`
 
 ### TC10 — Memory Leak / Stability
 Runs N register/deregister cycles with M UEs each. Samples memory every 5 cycles using `docker stats`. Reports growth percentage for each container. Fails if CP memory grows > 20%, warns if > 10%. Saves timestamped report to `tests/logs/`.
@@ -134,7 +136,7 @@ TC01 PASSED: All 5 UEs registered simultaneously
 | Slice | SST=1, SD=111111 | SST=3, SD=198153 |
 | WebUI port | 9999 | 4000 |
 | Provisioning | Direct MongoDB | WebUI REST API |
-| AMF health | cnode outbound client (TC09) | — |
+| AMF health | Port 50051 (TC09) | — |
 
 ## Known Limitations
 

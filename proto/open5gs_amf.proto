@@ -1,0 +1,106 @@
+syntax = "proto3";
+
+package open5gs.amf;
+
+// NOTE: No go_package — the C implementation in NFs/amf/amf-health.c
+// hand-encodes this proto without an external protobuf library.
+// This file is the authoritative schema; it documents the wire format
+// and can be used by external clients to generate stubs in any language.
+
+// ─── Health Check ─────────────────────────────────────────────────────────────
+
+// HealthCheckRequest is sent by the client to query AMF health.
+// The service field is informational; the AMF always responds
+// with the current serving status regardless of its value.
+// If the client sends nothing within 500 ms the server replies anyway,
+// so plain TCP probes (k8s liveness, load-balancers) work without sending.
+message HealthCheckRequest {
+  string service = 1;
+}
+
+// ServingStatus represents the health state of the AMF.
+enum ServingStatus {
+  UNKNOWN     = 0;
+  SERVING     = 1;
+  NOT_SERVING = 2;
+}
+
+// HealthCheckResponse is returned by the TCP health endpoint on port 50051.
+//
+// Wire format (raw TCP, no gRPC framing):
+//   [varint: payload_length][proto-encoded HealthCheckResponse]
+//
+// The response carries full identity + reachability so any monitoring client
+// knows what NF responded and how to reach it again:
+//   field 1 (status):    SERVING(1) or NOT_SERVING(2)
+//   field 2 (node_type): AMF(13)
+//   field 3 (ip):        AMF's advertised IP  (from AMF_TCP_ADVERTISE_IP)
+//   field 4 (port):      AMF's TCP port        (from AMF_TCP_PORT, default 50051)
+//
+// Test:
+//   python3 -c "
+//   import socket, time
+//   s = socket.socket(); s.connect(('AMF_HOST', 50051)); time.sleep(0.6)
+//   data = b''
+//   s.settimeout(1)
+//   try:
+//     while True:
+//       c = s.recv(64)
+//       if not c: break
+//       data += c
+//   except: pass
+//   s.close(); print(data.hex())"
+message HealthCheckResponse {
+  ServingStatus status    = 1;  // SERVING(1) or NOT_SERVING(2)
+  NodeType      node_type = 2;  // Always AMF(13) — identifies the responding NF
+  string        ip        = 3;  // AMF's advertised IP  (AMF_TCP_ADVERTISE_IP)
+  uint32        port      = 4;  // AMF's TCP port       (AMF_TCP_PORT)
+}
+
+// ─── Node Registration ────────────────────────────────────────────────────────
+
+// NodeType identifies the type of network node registering.
+// Wire-compatible with free5GC's fivegc.pb.go NodeType enum.
+enum NodeType {
+  INVALID = 0;
+  HWA     = 1;
+  MME     = 2;
+  SGW     = 3;
+  PGW     = 4;
+  MSC     = 5;
+  SGSN    = 6;
+  GGSN_C  = 7;
+  GGSN_U  = 8;
+  HNBGW   = 9;
+  HLR     = 10;
+  NMUSER  = 11;
+  GSM_CNE = 12;
+  AMF     = 13;
+}
+
+// RegisterRequest is sent by the AMF on startup to announce itself to a
+// registration server (e.g. an orchestrator or NMS).
+//
+// The AMF sends its own TCP health-check IP and port so the registration
+// server can later probe the AMF's health endpoint directly.
+//
+// Wire format: [varint: payload_length][proto-encoded RegisterRequest]
+//
+// Controlled by environment variables (see amf-health.h):
+//   AMF_TCP_REG_ENABLE       = "1" to enable (default: "0")
+//   AMF_TCP_REG_SERVER_IP    = registration server IP
+//   AMF_TCP_REG_SERVER_PORT  = registration server TCP port
+//   AMF_TCP_ADVERTISE_IP     = IP reported in this message
+//   AMF_TCP_PORT             = port reported in this message
+message RegisterRequest {
+  NodeType node_type = 1;   // Always AMF = 13
+  string   ip        = 2;   // AMF's advertised health-check IP
+  uint32   port      = 3;   // AMF's health-check TCP port (default 50051)
+}
+
+// RegisterResponse is the optional acknowledgement from the registration server.
+// The AMF treats absence of a response as acceptable (fire-and-forget).
+message RegisterResponse {
+  bool   success = 1;
+  string message = 2;
+}
