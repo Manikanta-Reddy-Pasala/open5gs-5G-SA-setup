@@ -44,6 +44,7 @@ services:
       - ./${CONFIG_DIR:-config}/pcf.yaml:/etc/open5gs/pcf.yaml
       - ./${CONFIG_DIR:-config}/nssf.yaml:/etc/open5gs/nssf.yaml
       - ./${CONFIG_DIR:-config}/bsf.yaml:/etc/open5gs/bsf.yaml
+      - ./consolidated/start-cp-nfs.sh:/open5gs/start-cp-nfs.sh
       - ./logs/cp:/var/log/open5gs
     environment:
       DB_URI: mongodb://db/open5gs

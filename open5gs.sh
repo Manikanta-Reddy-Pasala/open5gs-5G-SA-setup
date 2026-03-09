@@ -156,7 +156,7 @@ update_plmn_config() {
     sed -i "s/mcc: [0-9]*/mcc: ${mcc}/g" "${cfg_dir}/amf.yaml"
     sed -i "s/mnc: [0-9]*/mnc: ${mnc}/g" "${cfg_dir}/amf.yaml"
     sed -i "s/tac: [0-9]*/tac: ${tac}/g" "${cfg_dir}/amf.yaml"
-    sed -i "s/mcc: [0-9]*/mcc: ${mcc}/g" "${cfg_dir}/gnb.yaml"
+    sed -i "s/mcc: '[0-9]*'/mcc: '${mcc}'/g" "${cfg_dir}/gnb.yaml"
     sed -i "s/mnc: '[0-9]*'/mnc: '${mnc}'/g" "${cfg_dir}/gnb.yaml"
     sed -i "s/tac: [0-9]*/tac: ${tac}/g" "${cfg_dir}/gnb.yaml"
     sed -i "s/mcc: '[0-9]*'/mcc: '${mcc}'/g" "${cfg_dir}/ue.yaml"

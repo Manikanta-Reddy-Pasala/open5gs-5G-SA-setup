@@ -17,7 +17,7 @@ log() { echo "[$(date '+%H:%M:%S')] $1"; }
 
 wait_port() {
     local host="$1" port="$2" max="${3:-30}" waited=0
-    while ! wget -q --spider "http://${host}:${port}" 2>/dev/null && ! nc -z "$host" "$port" 2>/dev/null; do
+    while ! (echo > /dev/tcp/${host}/${port}) 2>/dev/null; do
         sleep 1; waited=$((waited+1))
         [ $waited -ge $max ] && { log "WARNING: $host:$port not ready after ${max}s"; return 1; }
     done
@@ -85,13 +85,13 @@ sleep 1
 log "Starting NSSF (port 7783)..."
 "$BINDIR/open5gs-nssfd" -c "$CFGDIR/nssf.yaml" >> "$LOGDIR/nssf.log" 2>&1 &
 NSSF_PID=$!
-sleep 1
+wait_port 127.0.0.1 7783
 
 # ── 9. SMF (Session Management Function) ─────────────────────
 log "Starting SMF (port 7781)..."
 "$BINDIR/open5gs-smfd" -c "$CFGDIR/smf.yaml" >> "$LOGDIR/smf.log" 2>&1 &
 SMF_PID=$!
-sleep 2
+wait_port 127.0.0.1 7781
 
 # ── 10. AMF (Access and Mobility Management Function) ─────────
 log "Starting AMF (port 7780, NGAP 38412)..."
