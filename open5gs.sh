@@ -400,11 +400,19 @@ cmd_start() {
 
     cleanup_sctp_forward 2>/dev/null || true
 
-    # MongoDB stays running across restarts — only force-recreate NF containers.
-    # --force-recreate does stop+rm+create in one Docker call (faster than separate commands).
-    log "Starting MongoDB + recreating Control Plane..."
+    # Ensure MongoDB is running (no-op if already up)
     CONFIG_DIR="$cfg_dir" docker compose -f "$COMPOSE_FILE" up -d open5gs-mongodb
-    CONFIG_DIR="$cfg_dir" docker compose -f "$COMPOSE_FILE" up -d --force-recreate open5gs-cp
+
+    # Restart CP: use "docker restart" (in-place, ~1s) if container exists,
+    # otherwise create it.  Configs are bind-mounted so restart picks up
+    # any PLMN / slice changes immediately — no need to destroy + recreate.
+    if docker inspect open5gs-cp >/dev/null 2>&1; then
+        log "Restarting Control Plane (in-place)..."
+        docker restart -t 1 open5gs-cp
+    else
+        log "Creating Control Plane..."
+        CONFIG_DIR="$cfg_dir" docker compose -f "$COMPOSE_FILE" up -d open5gs-cp
+    fi
 
     log "Waiting for Control Plane to be healthy..."
     wait_healthy "open5gs-cp" 120
