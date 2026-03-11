@@ -458,8 +458,11 @@ cmd_stop() {
     hdr "Stopping open5GS..."
     cleanup_sctp_forward 2>/dev/null || true
     cleanup_dataplane 2>/dev/null || true
-    docker compose -f "$COMPOSE_FILE" --profile ueransim down
-    ok "Stopped."
+    # Stop NF containers but keep them + MongoDB intact.
+    # MongoDB stays running so the next "start" is instant.
+    # Use "remove" for full teardown.
+    docker compose -f "$COMPOSE_FILE" --profile ueransim stop open5gs-cp open5gs-upf open5gs-webui ueransim 2>/dev/null || true
+    ok "Stopped.  (MongoDB still running — use 'remove' for full teardown)"
 }
 
 cmd_remove() {
