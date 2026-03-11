@@ -398,16 +398,13 @@ cmd_start() {
     hdr "  Starting open5GS 5G SA Core"
     hdr ""
 
-    # Keep MongoDB running across restarts — only recreate NF containers.
-    # This avoids a 3-5s cold-start wait for MongoDB on every PLMN change.
-    log "Stopping NF containers (keeping MongoDB)..."
-    docker compose -f "$COMPOSE_FILE" --profile ueransim stop open5gs-cp open5gs-upf open5gs-webui ueransim 2>/dev/null || true
-    docker compose -f "$COMPOSE_FILE" --profile ueransim rm -f open5gs-cp open5gs-upf open5gs-webui ueransim 2>/dev/null || true
-
     cleanup_sctp_forward 2>/dev/null || true
 
-    log "Starting MongoDB + Control Plane..."
-    CONFIG_DIR="$cfg_dir" docker compose -f "$COMPOSE_FILE" up -d open5gs-mongodb open5gs-cp
+    # MongoDB stays running across restarts — only force-recreate NF containers.
+    # --force-recreate does stop+rm+create in one Docker call (faster than separate commands).
+    log "Starting MongoDB + recreating Control Plane..."
+    CONFIG_DIR="$cfg_dir" docker compose -f "$COMPOSE_FILE" up -d open5gs-mongodb
+    CONFIG_DIR="$cfg_dir" docker compose -f "$COMPOSE_FILE" up -d --force-recreate open5gs-cp
 
     log "Waiting for Control Plane to be healthy..."
     wait_healthy "open5gs-cp" 120

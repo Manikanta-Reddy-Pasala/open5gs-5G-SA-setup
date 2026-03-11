@@ -2,7 +2,8 @@
 # ============================================================
 # start-cp-nfs.sh — Start all open5GS Control Plane NFs
 # ============================================================
-# Startup order: NRF → SCP → UDR → UDM → AUSF → PCF → BSF → NSSF → SMF → AMF
+# NRF must start first (service registry). All other 9 NFs launch
+# in parallel — they have built-in NRF retry logic.
 # ============================================================
 
 set -uo pipefail
@@ -28,7 +29,6 @@ wait_port() {
 wait_mongo() {
     local max=60 tries=0 max_tries=$((max * 5))
     log "Waiting for MongoDB..."
-    # Use bash /dev/tcp for a real TCP ping — avoids wget hanging on non-HTTP sockets
     while ! (echo > /dev/tcp/db/27017) 2>/dev/null; do
         sleep 0.2; tries=$((tries+1))
         [ $tries -ge $max_tries ] && { log "WARNING: MongoDB not ready after ${max}s"; break; }
@@ -40,49 +40,33 @@ wait_mongo() {
 # ── 0. Wait for MongoDB ──────────────────────────────────────
 wait_mongo
 
-# ── 1. NRF (Network Repository Function) ────────────────────
+# ── 1. NRF (must be first — service registry) ────────────────
 log "Starting NRF (port 7777)..."
 "$BINDIR/open5gs-nrfd" -c "$CFGDIR/nrf.yaml" >> "$LOGDIR/nrf.log" 2>&1 &
-NRF_PID=$!
 wait_port 127.0.0.1 7777
 
-# ── 2. SCP (Service Communication Proxy) ────────────────────
-log "Starting SCP (port 7778)..."
-"$BINDIR/open5gs-scpd" -c "$CFGDIR/scp.yaml" >> "$LOGDIR/scp.log" 2>&1 &
-SCP_PID=$!
-wait_port 127.0.0.1 7778
-
-# ── 3–7. UDR, UDM, AUSF, PCF, BSF (independent — start in parallel)
-log "Starting UDR(7786) UDM(7785) AUSF(7784) PCF(7782) BSF(7787)..."
+# ── 2. ALL other NFs in parallel (they retry NRF registration) ─
+log "Starting SCP + UDR + UDM + AUSF + PCF + BSF + NSSF + SMF + AMF..."
+"$BINDIR/open5gs-scpd"  -c "$CFGDIR/scp.yaml"  >> "$LOGDIR/scp.log"  2>&1 &
 "$BINDIR/open5gs-udrd"  -c "$CFGDIR/udr.yaml"  >> "$LOGDIR/udr.log"  2>&1 &
 "$BINDIR/open5gs-udmd"  -c "$CFGDIR/udm.yaml"  >> "$LOGDIR/udm.log"  2>&1 &
 "$BINDIR/open5gs-ausfd" -c "$CFGDIR/ausf.yaml" >> "$LOGDIR/ausf.log" 2>&1 &
 "$BINDIR/open5gs-pcfd"  -c "$CFGDIR/pcf.yaml"  >> "$LOGDIR/pcf.log"  2>&1 &
 "$BINDIR/open5gs-bsfd"  -c "$CFGDIR/bsf.yaml"  >> "$LOGDIR/bsf.log"  2>&1 &
-# Wait for all five to be listening
-wait_port 127.0.0.1 7786
-wait_port 127.0.0.1 7785
-wait_port 127.0.0.1 7784
-wait_port 127.0.0.1 7782
-wait_port 127.0.0.1 7787
-
-# ── 8. NSSF (Network Slice Selection Function) ───────────────
-log "Starting NSSF (port 7783)..."
 "$BINDIR/open5gs-nssfd" -c "$CFGDIR/nssf.yaml" >> "$LOGDIR/nssf.log" 2>&1 &
-NSSF_PID=$!
-wait_port 127.0.0.1 7783
+"$BINDIR/open5gs-smfd"  -c "$CFGDIR/smf.yaml"  >> "$LOGDIR/smf.log"  2>&1 &
+"$BINDIR/open5gs-amfd"  -c "$CFGDIR/amf.yaml"  >> "$LOGDIR/amf.log"  2>&1 &
 
-# ── 9. SMF (Session Management Function) ─────────────────────
-log "Starting SMF (port 7781)..."
-"$BINDIR/open5gs-smfd" -c "$CFGDIR/smf.yaml" >> "$LOGDIR/smf.log" 2>&1 &
-SMF_PID=$!
-wait_port 127.0.0.1 7781
-
-# ── 10. AMF (Access and Mobility Management Function) ─────────
-log "Starting AMF (port 7780, NGAP 38412)..."
-"$BINDIR/open5gs-amfd" -c "$CFGDIR/amf.yaml" >> "$LOGDIR/amf.log" 2>&1 &
-AMF_PID=$!
-wait_port 127.0.0.1 7780
+# Wait for all 9 to bind their ports
+wait_port 127.0.0.1 7778   # SCP
+wait_port 127.0.0.1 7786   # UDR
+wait_port 127.0.0.1 7785   # UDM
+wait_port 127.0.0.1 7784   # AUSF
+wait_port 127.0.0.1 7782   # PCF
+wait_port 127.0.0.1 7787   # BSF
+wait_port 127.0.0.1 7783   # NSSF
+wait_port 127.0.0.1 7781   # SMF
+wait_port 127.0.0.1 7780   # AMF
 
 log ""
 log "========================================="
