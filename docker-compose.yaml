@@ -73,10 +73,10 @@ services:
           - bsf.open5gs.org
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/7777 && echo ok"]
-      interval: 5s
-      timeout: 3s
+      interval: 2s
+      timeout: 2s
       start_period: 30s
-      retries: 15
+      retries: 30
     depends_on:
       open5gs-mongodb:
         condition: service_started

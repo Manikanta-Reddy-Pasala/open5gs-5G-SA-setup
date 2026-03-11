@@ -16,24 +16,25 @@ mkdir -p "$LOGDIR"
 log() { echo "[$(date '+%H:%M:%S')] $1"; }
 
 wait_port() {
-    local host="$1" port="$2" max="${3:-30}" waited=0
+    local host="$1" port="$2" max="${3:-30}" tries=0 max_tries=$((max * 5))
     while ! (echo > /dev/tcp/${host}/${port}) 2>/dev/null; do
-        sleep 1; waited=$((waited+1))
-        [ $waited -ge $max ] && { log "WARNING: $host:$port not ready after ${max}s"; return 1; }
+        sleep 0.2; tries=$((tries+1))
+        [ $tries -ge $max_tries ] && { log "WARNING: $host:$port not ready after ${max}s"; return 1; }
     done
-    log "  $host:$port ready (${waited}s)"
+    local ms=$((tries * 200))
+    log "  $host:$port ready (${ms}ms)"
 }
 
 wait_mongo() {
-    local max=60 waited=0
+    local max=60 tries=0 max_tries=$((max * 5))
     log "Waiting for MongoDB..."
     # Use bash /dev/tcp for a real TCP ping — avoids wget hanging on non-HTTP sockets
     while ! (echo > /dev/tcp/db/27017) 2>/dev/null; do
-        sleep 2; waited=$((waited+2))
-        [ $waited -ge $max ] && { log "WARNING: MongoDB not ready after ${max}s"; break; }
+        sleep 0.2; tries=$((tries+1))
+        [ $tries -ge $max_tries ] && { log "WARNING: MongoDB not ready after ${max}s"; break; }
     done
-    log "  MongoDB ready (${waited}s)"
-    sleep 1
+    local ms=$((tries * 200))
+    log "  MongoDB ready (${ms}ms)"
 }
 
 # ── 0. Wait for MongoDB ──────────────────────────────────────
@@ -43,43 +44,27 @@ wait_mongo
 log "Starting NRF (port 7777)..."
 "$BINDIR/open5gs-nrfd" -c "$CFGDIR/nrf.yaml" >> "$LOGDIR/nrf.log" 2>&1 &
 NRF_PID=$!
-sleep 3
+wait_port 127.0.0.1 7777
 
 # ── 2. SCP (Service Communication Proxy) ────────────────────
 log "Starting SCP (port 7778)..."
 "$BINDIR/open5gs-scpd" -c "$CFGDIR/scp.yaml" >> "$LOGDIR/scp.log" 2>&1 &
 SCP_PID=$!
-sleep 2
+wait_port 127.0.0.1 7778
 
-# ── 3. UDR (Unified Data Repository) ────────────────────────
-log "Starting UDR (port 7786)..."
-"$BINDIR/open5gs-udrd" -c "$CFGDIR/udr.yaml" >> "$LOGDIR/udr.log" 2>&1 &
-UDR_PID=$!
-sleep 1
-
-# ── 4. UDM (Unified Data Management) ────────────────────────
-log "Starting UDM (port 7785)..."
-"$BINDIR/open5gs-udmd" -c "$CFGDIR/udm.yaml" >> "$LOGDIR/udm.log" 2>&1 &
-UDM_PID=$!
-sleep 1
-
-# ── 5. AUSF (Authentication Server Function) ────────────────
-log "Starting AUSF (port 7784)..."
+# ── 3–7. UDR, UDM, AUSF, PCF, BSF (independent — start in parallel)
+log "Starting UDR(7786) UDM(7785) AUSF(7784) PCF(7782) BSF(7787)..."
+"$BINDIR/open5gs-udrd"  -c "$CFGDIR/udr.yaml"  >> "$LOGDIR/udr.log"  2>&1 &
+"$BINDIR/open5gs-udmd"  -c "$CFGDIR/udm.yaml"  >> "$LOGDIR/udm.log"  2>&1 &
 "$BINDIR/open5gs-ausfd" -c "$CFGDIR/ausf.yaml" >> "$LOGDIR/ausf.log" 2>&1 &
-AUSF_PID=$!
-sleep 1
-
-# ── 6. PCF (Policy Control Function) ────────────────────────
-log "Starting PCF (port 7782)..."
-"$BINDIR/open5gs-pcfd" -c "$CFGDIR/pcf.yaml" >> "$LOGDIR/pcf.log" 2>&1 &
-PCF_PID=$!
-sleep 1
-
-# ── 7. BSF (Binding Support Function) ────────────────────────
-log "Starting BSF (port 7787)..."
-"$BINDIR/open5gs-bsfd" -c "$CFGDIR/bsf.yaml" >> "$LOGDIR/bsf.log" 2>&1 &
-BSF_PID=$!
-sleep 1
+"$BINDIR/open5gs-pcfd"  -c "$CFGDIR/pcf.yaml"  >> "$LOGDIR/pcf.log"  2>&1 &
+"$BINDIR/open5gs-bsfd"  -c "$CFGDIR/bsf.yaml"  >> "$LOGDIR/bsf.log"  2>&1 &
+# Wait for all five to be listening
+wait_port 127.0.0.1 7786
+wait_port 127.0.0.1 7785
+wait_port 127.0.0.1 7784
+wait_port 127.0.0.1 7782
+wait_port 127.0.0.1 7787
 
 # ── 8. NSSF (Network Slice Selection Function) ───────────────
 log "Starting NSSF (port 7783)..."
@@ -97,7 +82,7 @@ wait_port 127.0.0.1 7781
 log "Starting AMF (port 7780, NGAP 38412)..."
 "$BINDIR/open5gs-amfd" -c "$CFGDIR/amf.yaml" >> "$LOGDIR/amf.log" 2>&1 &
 AMF_PID=$!
-sleep 2
+wait_port 127.0.0.1 7780
 
 log ""
 log "========================================="

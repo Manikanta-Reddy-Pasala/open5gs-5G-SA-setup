@@ -80,7 +80,7 @@ wait_healthy() {
             ok "$container is healthy (took ${waited}s)"
             return 0
         fi
-        sleep 2; waited=$((waited + 2))
+        sleep 1; waited=$((waited + 1))
         if [ $((waited % 10)) -eq 0 ]; then
             log "  Still waiting for $container... (${waited}s, status: $status)"
         fi
@@ -398,8 +398,11 @@ cmd_start() {
     hdr "  Starting open5GS 5G SA Core"
     hdr ""
 
-    log "Stopping any existing containers..."
-    docker compose -f "$COMPOSE_FILE" down 2>/dev/null || true
+    # Keep MongoDB running across restarts — only recreate NF containers.
+    # This avoids a 3-5s cold-start wait for MongoDB on every PLMN change.
+    log "Stopping NF containers (keeping MongoDB)..."
+    docker compose -f "$COMPOSE_FILE" --profile ueransim stop open5gs-cp open5gs-upf open5gs-webui ueransim 2>/dev/null || true
+    docker compose -f "$COMPOSE_FILE" --profile ueransim rm -f open5gs-cp open5gs-upf open5gs-webui ueransim 2>/dev/null || true
 
     cleanup_sctp_forward 2>/dev/null || true
 
