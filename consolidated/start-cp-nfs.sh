@@ -17,7 +17,8 @@ mkdir -p "$LOGDIR"
 log() { echo "[$(date '+%H:%M:%S')] $1"; }
 
 wait_port() {
-    local host="$1" port="$2" max="${3:-30}" tries=0 max_tries=$((max * 5))
+    local host="$1" port="$2" max="${3:-30}" tries=0
+    local max_tries=$((max * 5))
     while ! (echo > /dev/tcp/${host}/${port}) 2>/dev/null; do
         sleep 0.2; tries=$((tries+1))
         [ $tries -ge $max_tries ] && { log "WARNING: $host:$port not ready after ${max}s"; return 1; }
@@ -27,7 +28,8 @@ wait_port() {
 }
 
 wait_mongo() {
-    local max=60 tries=0 max_tries=$((max * 5))
+    local max=60 tries=0
+    local max_tries=$((max * 5))
     log "Waiting for MongoDB..."
     while ! (echo > /dev/tcp/db/27017) 2>/dev/null; do
         sleep 0.2; tries=$((tries+1))
