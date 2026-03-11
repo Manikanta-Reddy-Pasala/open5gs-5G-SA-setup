@@ -73,10 +73,10 @@ services:
           - bsf.open5gs.org
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/7777 && echo ok"]
-      interval: 2s
-      timeout: 2s
-      start_period: 30s
-      retries: 30
+      interval: 1s
+      timeout: 1s
+      start_period: 1s
+      retries: 60
     depends_on:
       open5gs-mongodb:
         condition: service_started
@@ -103,7 +103,7 @@ services:
           - upf.open5gs.org
     depends_on:
       open5gs-cp:
-        condition: service_healthy
+        condition: service_started
 
   # ── Container 4: WebUI (Subscriber Management) ─────────────
   open5gs-webui:
@@ -149,7 +149,7 @@ services:
           - gnb.open5gs.org
     depends_on:
       open5gs-cp:
-        condition: service_healthy
+        condition: service_started
     profiles:
       - ueransim
 

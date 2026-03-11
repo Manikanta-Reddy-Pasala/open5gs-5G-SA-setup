@@ -68,25 +68,17 @@ hdr()  { echo "${BOLD}${CYAN}$1${NC}"; }
 
 # ── Helpers ──────────────────────────────────────────────────
 
-wait_healthy() {
-    local container="$1"
-    local max_wait="${2:-120}"
-    local waited=0
-
-    while [ $waited -lt "$max_wait" ]; do
-        local status
-        status=$(docker inspect --format='{{.State.Health.Status}}' "$container" 2>/dev/null || echo "unknown")
-        if [ "$status" = "healthy" ]; then
-            ok "$container is healthy (took ${waited}s)"
-            return 0
-        fi
-        sleep 1; waited=$((waited + 1))
-        if [ $((waited % 10)) -eq 0 ]; then
-            log "  Still waiting for $container... (${waited}s, status: $status)"
-        fi
+wait_cp_ready() {
+    # Direct TCP check to NRF on the CP's fixed IP — bypasses Docker's
+    # slow healthcheck scheduler (~5s overhead) since NFs start in <1s.
+    local max="${1:-60}" tries=0
+    local max_tries=$((max * 5))
+    while ! (echo > /dev/tcp/${AMF_IP}/7777) 2>/dev/null; do
+        sleep 0.2; tries=$((tries+1))
+        [ $tries -ge $max_tries ] && { warn "CP not ready after ${max}s"; return 1; }
     done
-    warn "$container health check timed out after ${max_wait}s"
-    return 1
+    local ms=$((tries * 200))
+    ok "Control Plane ready (${ms}ms)"
 }
 
 setup_sctp_forward() {
@@ -414,8 +406,8 @@ cmd_start() {
         CONFIG_DIR="$cfg_dir" docker compose -f "$COMPOSE_FILE" up -d open5gs-cp
     fi
 
-    log "Waiting for Control Plane to be healthy..."
-    wait_healthy "open5gs-cp" 120
+    log "Waiting for Control Plane..."
+    wait_cp_ready 60
 
     log "Starting UPF (fresh start to ensure clean PFCP association with SMF)..."
     # Always force-recreate UPF so it starts with no stale PFCP state.
