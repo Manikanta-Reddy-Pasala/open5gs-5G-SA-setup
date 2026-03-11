@@ -390,8 +390,6 @@ cmd_start() {
     hdr "  Starting open5GS 5G SA Core"
     hdr ""
 
-    cleanup_sctp_forward 2>/dev/null || true
-
     # Ensure MongoDB is running (no-op if already up)
     CONFIG_DIR="$cfg_dir" docker compose -f "$COMPOSE_FILE" up -d open5gs-mongodb
 
@@ -448,13 +446,10 @@ cmd_start() {
 
 cmd_stop() {
     hdr "Stopping open5GS..."
-    cleanup_sctp_forward 2>/dev/null || true
-    cleanup_dataplane 2>/dev/null || true
-    # Stop NF containers but keep them + MongoDB intact.
-    # MongoDB stays running so the next "start" is instant.
-    # Use "remove" for full teardown.
+    # Stop NF containers only — keep MongoDB, networking, and containers intact
+    # so the next "start" is instant.  Use "remove" for full teardown.
     docker compose -f "$COMPOSE_FILE" --profile ueransim stop open5gs-cp open5gs-upf open5gs-webui ueransim 2>/dev/null || true
-    ok "Stopped.  (MongoDB still running — use 'remove' for full teardown)"
+    ok "Stopped.  (MongoDB + networking intact — use 'remove' for full teardown)"
 }
 
 cmd_remove() {
