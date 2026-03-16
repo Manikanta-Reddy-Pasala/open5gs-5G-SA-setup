@@ -1,27 +1,27 @@
 #!/bin/bash
 # ============================================================
-# open5gs.sh - Build & Run for open5GS 5G SA Core
+# 5gsa.sh - Build & Run for open5GS 5G SA Core
 # ============================================================
 # Single script to build and run a portable 5G SA core.
 #
 # Usage:
-#   ./open5gs.sh build                # Compile from source (~20 min)
-#   ./open5gs.sh build --quick        # Rebuild runtime images only
-#   ./open5gs.sh start                # Start core (without UERANSIM)
-#   ./open5gs.sh start --ueransim     # Start core + UERANSIM simulator
-#   ./open5gs.sh start --debug        # Start with debug-level logging
-#   ./open5gs.sh start --mcc 404 --mnc 30 --tac 1  # Custom single PLMN
-#   ./open5gs.sh start --plmn 404:30 --plmn 404:20 --tac 1  # Multi-PLMN
-#   ./open5gs.sh start --sst 1 --sd 111111          # Custom slice
-#   ./open5gs.sh provision            # Provision default subscriber
-#   ./open5gs.sh bulk-provision --count 10  # Provision 10 subscribers
-#   ./open5gs.sh ue start             # Launch UE (inside UERANSIM container)
-#   ./open5gs.sh ue stop              # Stop UE
-#   ./open5gs.sh ue status            # Check UE connectivity
-#   ./open5gs.sh stop                 # Stop all containers
-#   ./open5gs.sh remove               # Remove all containers and volumes
-#   ./open5gs.sh status               # Show container status
-#   ./open5gs.sh logs [nf]            # Tail logs
+#   ./5gsa.sh build                # Compile from source (~20 min)
+#   ./5gsa.sh build --quick        # Rebuild runtime images only
+#   ./5gsa.sh start                # Start core (without UERANSIM)
+#   ./5gsa.sh start --ueransim     # Start core + UERANSIM simulator
+#   ./5gsa.sh start --debug        # Start with debug-level logging
+#   ./5gsa.sh start --mcc 404 --mnc 30 --tac 1  # Custom single PLMN
+#   ./5gsa.sh start --plmn 404:30 --plmn 404:20 --tac 1  # Multi-PLMN
+#   ./5gsa.sh start --sst 1 --sd 111111          # Custom slice
+#   ./5gsa.sh provision            # Provision default subscriber
+#   ./5gsa.sh bulk-provision --count 10  # Provision 10 subscribers
+#   ./5gsa.sh ue start             # Launch UE (inside UERANSIM container)
+#   ./5gsa.sh ue stop              # Stop UE
+#   ./5gsa.sh ue status            # Check UE connectivity
+#   ./5gsa.sh stop                 # Stop all containers
+#   ./5gsa.sh remove               # Remove all containers and volumes
+#   ./5gsa.sh status               # Show container status
+#   ./5gsa.sh logs [nf]            # Tail logs
 # ============================================================
 
 set -uo pipefail
@@ -315,7 +315,7 @@ cmd_build() {
         log "Step 1/3: Skipping source build (--quick mode)"
         log "Step 2/3: Using existing build-output/"
         if [ ! -d "build-output/open5gs" ]; then
-            err "build-output/open5gs/ not found. Run './open5gs.sh build' first."
+            err "build-output/open5gs/ not found. Run './5gsa.sh build' first."
             exit 1
         fi
     fi
@@ -331,7 +331,7 @@ cmd_build() {
     log "Runtime images:"
     docker images --format "  {{.Repository}}:{{.Tag}} ({{.Size}})" | grep -E "open5gs-(cp|upf|webui|ueransim)" || true
     hdr ""
-    log "Next: ./open5gs.sh start"
+    log "Next: ./5gsa.sh start"
     hdr ""
 }
 
@@ -439,8 +439,8 @@ cmd_start() {
     hdr ""
     log "  NRF API:   http://10.200.100.16:7777"
     hdr ""
-    log "Run './open5gs.sh provision' to add a test subscriber."
-    log "Run './open5gs.sh status' to verify all NFs are running."
+    log "Run './5gsa.sh provision' to add a test subscriber."
+    log "Run './5gsa.sh status' to verify all NFs are running."
     hdr ""
 }
 
@@ -650,7 +650,7 @@ PYEOF
         ok "Core is UP"
     else
         warn "Some containers are not running"
-        echo "Run: ./open5gs.sh logs"
+        echo "Run: ./5gsa.sh logs"
     fi
     hdr ""
 }
@@ -851,7 +851,7 @@ cmd_ue() {
             sleep 3
             log "Checking UE status..."
             docker exec open5gs-ueransim ./nr-cli imsi-${IMSI#imsi-} --exec "status" 2>/dev/null || \
-                log "UE CLI not yet available, check logs: ./open5gs.sh logs gnb"
+                log "UE CLI not yet available, check logs: ./5gsa.sh logs gnb"
             ;;
         stop)
             docker exec open5gs-ueransim pkill -f "nr-ue" 2>/dev/null || true
@@ -862,14 +862,14 @@ cmd_ue() {
                 warn "UERANSIM not running or UE not connected"
             ;;
         *)
-            echo "Usage: ./open5gs.sh ue [start|stop|status]"
+            echo "Usage: ./5gsa.sh ue [start|stop|status]"
             ;;
     esac
 }
 
 cmd_help() {
     hdr ""
-    hdr "  open5gs.sh - open5GS 5G SA Core Manager"
+    hdr "  5gsa.sh - open5GS 5G SA Core Manager"
     hdr ""
     echo "  ${BOLD}Build commands:${NC}"
     echo "    build                     Build all NFs + UERANSIM from source (~20 min)"
