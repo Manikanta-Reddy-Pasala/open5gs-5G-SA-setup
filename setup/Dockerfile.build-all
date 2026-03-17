@@ -3,11 +3,11 @@
 # ============================================================
 # Builds open5GS CP NFs, UPF, and UERANSIM from source.
 #
-# Build:
-#   docker build -f Dockerfile.build-all -t open5gs-builder:v2.7.5 .
+# Build (from repo root):
+#   docker build -f setup/Dockerfile.build-all -t open5gs-builder:v2.7.5 .
 #
 # Extract binaries:
-#   docker run --rm -v $(pwd)/build-output:/export open5gs-builder:v2.7.5
+#   docker run --rm -v $(pwd)/setup/build-output:/export open5gs-builder:v2.7.5
 # ============================================================
 
 # ── Stage 1: Build open5GS from source ────────────────────────
@@ -33,16 +33,16 @@ RUN pip3 install --upgrade meson ninja
 
 WORKDIR /src
 
-# Clone open5GS v2.7.5
-RUN git clone --depth 1 -b v2.7.5 https://github.com/open5gs/open5gs.git
+# Copy local open5gs source (pre-cloned at repo root)
+COPY open5gs/ /src/open5gs
 
 WORKDIR /src/open5gs
 
 # ── AMF fork: inject cnode outbound registration + health-check client ──
 # Copy cnode source files into the cloned tree
 RUN mkdir -p /src/open5gs/src/amf/cnode
-COPY NFs/amf/cnode/amf_cnode.h /src/open5gs/src/amf/cnode/amf_cnode.h
-COPY NFs/amf/cnode/amf_cnode.c /src/open5gs/src/amf/cnode/amf_cnode.c
+COPY setup/NFs/amf/cnode/amf_cnode.h /src/open5gs/src/amf/cnode/amf_cnode.h
+COPY setup/NFs/amf/cnode/amf_cnode.c /src/open5gs/src/amf/cnode/amf_cnode.c
 
 # Patch the two existing AMF source files with minimal targeted changes.
 # Python3 is already installed (needed for meson).

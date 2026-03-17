@@ -292,7 +292,8 @@ cmd_build() {
         hdr ""
 
         log "Step 1/3: Building all open5GS + UERANSIM from source..."
-        docker build -f Dockerfile.build-all -t "open5gs-builder:${OPEN5GS_VERSION}" .
+        # Context = repo root (..) so Dockerfile can COPY both open5gs/ and setup/NFs/
+        docker build -f Dockerfile.build-all -t "open5gs-builder:${OPEN5GS_VERSION}" ..
 
         log "Source build complete."
         log "Step 2/3: Extracting built binaries to build-output/..."
