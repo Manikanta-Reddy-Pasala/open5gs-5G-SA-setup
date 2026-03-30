@@ -9,11 +9,8 @@
 #   ./start.sh --id 1 --webui-port 4001        # Custom WebUI port
 #
 # Each instance gets:
-#   - Network:    10.200.<ID>.0/24
-#   - CP (AMF):   10.200.<ID>.16
-#   - UPF:        10.200.<ID>.17
-#   - Host NGAP:  HOST_IP:<38411 + ID>  (sctp)
-#   - Host GTP-U: HOST_IP:<2151 + ID>   (udp)
+#   - Docker bridge:  10.200.<ID>.0/24  (CP=.16, UPF=.17)
+#   - BTS-facing IP:  10.0.0.<90+ID>    (standard ports 38412/2152)
 #   - Shared host MongoDB (db: open5gs)
 # ============================================================
 
@@ -64,9 +61,8 @@ INSTANCE_NAME="bts${INSTANCE_ID}"
 COMPOSE_PROJECT="bts${INSTANCE_ID}"
 WEBUI_PORT="${WEBUI_PORT:-$((4000 + INSTANCE_ID))}"
 
-# Host-facing ports (unique per instance so external BTS can reach each CN)
-HOST_NGAP_PORT=$((38411 + INSTANCE_ID))   # bts1=38412, bts2=38413, ...
-HOST_GTPU_PORT=$((2151 + INSTANCE_ID))    # bts1=2152,  bts2=2153,  ...
+# BTS-facing IP (unique per instance, standard ports)
+BTS_IP=$(instance_bts_ip "$INSTANCE_ID")  # bts1=10.0.0.91, bts2=10.0.0.92, ...
 HOST_IP=$(hostname -I | awk '{print $1}')
 
 LOG_LEVEL="info"
@@ -78,11 +74,8 @@ UE_GW="10.$((205 + INSTANCE_ID)).0.1"
 hdr ""
 hdr "  Starting CN Instance: ${INSTANCE_NAME}"
 hdr "  ─────────────────────────────────"
-log "  Network:    ${SUBNET}"
-log "  CP/AMF:     ${CP_IP}:${NGAP_PORT}  (internal)"
-log "  UPF:        ${UPF_IP}:${GTPU_PORT}  (internal)"
-log "  Host NGAP:  ${HOST_IP}:${HOST_NGAP_PORT} → ${CP_IP}:${NGAP_PORT}"
-log "  Host GTP-U: ${HOST_IP}:${HOST_GTPU_PORT} → ${UPF_IP}:${GTPU_PORT}"
+log "  BTS IP:     ${BTS_IP}  (NGAP:${NGAP_PORT} / GTP-U:${GTPU_PORT})"
+log "  Docker net: ${SUBNET}  (CP:${CP_IP} / UPF:${UPF_IP})"
 log "  MongoDB:    ${MONGO_IP}:27017 (db: ${DB_NAME})"
 log "  PLMN:       MCC=${MCC} MNC=${MNC} TAC=${TAC}"
 log "  Slice:      SST=${SST} SD=${SD}"
@@ -283,18 +276,23 @@ iptables -C FORWARD -s "${UE_SUBNET}" -j ACCEPT 2>/dev/null || \
 iptables -C FORWARD -d "${UE_SUBNET}" -j ACCEPT 2>/dev/null || \
     iptables -I FORWARD 1 -d "${UE_SUBNET}" -j ACCEPT
 
-# ── Set up SCTP DNAT: host:HOST_NGAP_PORT → CP:38412 ───────
-log "Setting up NGAP SCTP DNAT (host:${HOST_NGAP_PORT} → ${CP_IP}:${NGAP_PORT})..."
+# ── Set up BTS IP on dummy interface ─────────────────────────
+log "Setting up BTS IP ${BTS_IP} on ${BTS_IFACE}..."
+ensure_bts_iface
+ip addr add "${BTS_IP}/32" dev "${BTS_IFACE}" 2>/dev/null || true
+
+# ── DNAT: BTS_IP:38412 → CP, BTS_IP:2152 → UPF ────────────
 modprobe sctp 2>/dev/null || true
-iptables -t nat -A PREROUTING -p sctp --dport "${HOST_NGAP_PORT}" -j DNAT --to-destination "${CP_IP}:${NGAP_PORT}"
-iptables -t nat -A OUTPUT     -p sctp --dport "${HOST_NGAP_PORT}" -j DNAT --to-destination "${CP_IP}:${NGAP_PORT}"
+
+log "  NGAP: ${BTS_IP}:${NGAP_PORT} → ${CP_IP}:${NGAP_PORT}"
+iptables -t nat -A PREROUTING -d "${BTS_IP}" -p sctp --dport "${NGAP_PORT}" -j DNAT --to-destination "${CP_IP}:${NGAP_PORT}"
+iptables -t nat -A OUTPUT     -d "${BTS_IP}" -p sctp --dport "${NGAP_PORT}" -j DNAT --to-destination "${CP_IP}:${NGAP_PORT}"
 iptables -A FORWARD -p sctp -d "${CP_IP}" --dport "${NGAP_PORT}" -j ACCEPT
 iptables -A FORWARD -p sctp -s "${CP_IP}" --sport "${NGAP_PORT}" -j ACCEPT
 
-# ── Set up GTP-U DNAT: host:HOST_GTPU_PORT → UPF:2152 ──────
-log "Setting up GTP-U UDP DNAT (host:${HOST_GTPU_PORT} → ${UPF_IP}:${GTPU_PORT})..."
-iptables -t nat -A PREROUTING -p udp --dport "${HOST_GTPU_PORT}" -j DNAT --to-destination "${UPF_IP}:${GTPU_PORT}"
-iptables -t nat -A OUTPUT     -p udp --dport "${HOST_GTPU_PORT}" -j DNAT --to-destination "${UPF_IP}:${GTPU_PORT}"
+log "  GTPU: ${BTS_IP}:${GTPU_PORT} → ${UPF_IP}:${GTPU_PORT}"
+iptables -t nat -A PREROUTING -d "${BTS_IP}" -p udp --dport "${GTPU_PORT}" -j DNAT --to-destination "${UPF_IP}:${GTPU_PORT}"
+iptables -t nat -A OUTPUT     -d "${BTS_IP}" -p udp --dport "${GTPU_PORT}" -j DNAT --to-destination "${UPF_IP}:${GTPU_PORT}"
 iptables -I FORWARD 1 -p udp -d "${UPF_IP}" --dport "${GTPU_PORT}" -j ACCEPT
 iptables -I FORWARD 1 -p udp -s "${UPF_IP}" --sport "${GTPU_PORT}" -j ACCEPT
 
@@ -303,9 +301,9 @@ hdr "  ========================================="
 hdr "  CN Instance ${INSTANCE_NAME} is RUNNING"
 hdr "  ========================================="
 hdr ""
-hdr "  ── External BTS Access (use these) ──"
-log "    NGAP/SCTP: ${HOST_IP}:${HOST_NGAP_PORT}"
-log "    GTP-U/UDP: ${HOST_IP}:${HOST_GTPU_PORT}"
+hdr "  ── BTS connects to (same ports, different IPs) ──"
+log "    NGAP/SCTP: ${BTS_IP}:${NGAP_PORT}"
+log "    GTP-U/UDP: ${BTS_IP}:${GTPU_PORT}"
 hdr ""
 hdr "  ── Internal (Docker bridge) ──"
 log "    AMF:  ${CP_IP}:${NGAP_PORT}"

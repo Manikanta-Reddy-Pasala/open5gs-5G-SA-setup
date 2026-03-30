@@ -40,8 +40,7 @@ stop_instance() {
     local ue_subnet="10.$((205 + id)).0.0/16"
     local upf_ip=$(instance_upf_ip "$id")
     local cp_ip=$(instance_cp_ip "$id")
-    local host_ngap=$((38411 + id))
-    local host_gtpu=$((2151 + id))
+    local bts_ip=$(instance_bts_ip "$id")
 
     if [ "$REMOVE" = true ]; then
         hdr "Removing instance ${name}..."
@@ -53,20 +52,23 @@ stop_instance() {
         iptables -D FORWARD -s "${ue_subnet}" -j ACCEPT 2>/dev/null || true
         iptables -D FORWARD -d "${ue_subnet}" -j ACCEPT 2>/dev/null || true
 
-        # Cleanup SCTP DNAT
-        iptables -t nat -D PREROUTING -p sctp --dport "${host_ngap}" -j DNAT --to-destination "${cp_ip}:${NGAP_PORT}" 2>/dev/null || true
-        iptables -t nat -D OUTPUT     -p sctp --dport "${host_ngap}" -j DNAT --to-destination "${cp_ip}:${NGAP_PORT}" 2>/dev/null || true
+        # Cleanup SCTP DNAT (BTS_IP based)
+        iptables -t nat -D PREROUTING -d "${bts_ip}" -p sctp --dport "${NGAP_PORT}" -j DNAT --to-destination "${cp_ip}:${NGAP_PORT}" 2>/dev/null || true
+        iptables -t nat -D OUTPUT     -d "${bts_ip}" -p sctp --dport "${NGAP_PORT}" -j DNAT --to-destination "${cp_ip}:${NGAP_PORT}" 2>/dev/null || true
         iptables -D FORWARD -p sctp -d "${cp_ip}" --dport "${NGAP_PORT}" -j ACCEPT 2>/dev/null || true
         iptables -D FORWARD -p sctp -s "${cp_ip}" --sport "${NGAP_PORT}" -j ACCEPT 2>/dev/null || true
 
-        # Cleanup GTP-U DNAT
-        iptables -t nat -D PREROUTING -p udp --dport "${host_gtpu}" -j DNAT --to-destination "${upf_ip}:${GTPU_PORT}" 2>/dev/null || true
-        iptables -t nat -D OUTPUT     -p udp --dport "${host_gtpu}" -j DNAT --to-destination "${upf_ip}:${GTPU_PORT}" 2>/dev/null || true
+        # Cleanup GTP-U DNAT (BTS_IP based)
+        iptables -t nat -D PREROUTING -d "${bts_ip}" -p udp --dport "${GTPU_PORT}" -j DNAT --to-destination "${upf_ip}:${GTPU_PORT}" 2>/dev/null || true
+        iptables -t nat -D OUTPUT     -d "${bts_ip}" -p udp --dport "${GTPU_PORT}" -j DNAT --to-destination "${upf_ip}:${GTPU_PORT}" 2>/dev/null || true
         iptables -D FORWARD -p udp -d "${upf_ip}" --dport "${GTPU_PORT}" -j ACCEPT 2>/dev/null || true
         iptables -D FORWARD -p udp -s "${upf_ip}" --sport "${GTPU_PORT}" -j ACCEPT 2>/dev/null || true
 
+        # Remove BTS IP from dummy interface
+        ip addr del "${bts_ip}/32" dev "${BTS_IFACE}" 2>/dev/null || true
+
         rm -rf "${inst_dir}"
-        ok "Instance ${name} removed (containers + iptables cleaned)"
+        ok "Instance ${name} removed (containers + iptables + ${bts_ip} cleaned)"
     else
         hdr "Stopping instance ${name}..."
         docker compose -p "${name}" -f "${compose_file}" stop 2>/dev/null || true

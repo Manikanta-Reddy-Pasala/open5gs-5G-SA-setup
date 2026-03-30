@@ -23,9 +23,13 @@ DEFAULT_OPC="109ee52735ae6d3849112cf4175029c7"
 DEFAULT_AMF_FIELD="8000"
 
 # ── Network defaults ────────────────────────────────────────
-# Each BTS instance gets 10.200.<ID>.0/24
-# CP = .16, UPF = .17
+# Each BTS instance gets:
+#   Docker bridge: 10.200.<ID>.0/24  (CP=.16, UPF=.17)
+#   Host-facing:   10.0.0.<90+ID>    (BTS connects here, standard ports)
 DEFAULT_BASE_SUBNET="10.200"
+BTS_IP_BASE="10.0.0"
+BTS_IP_OFFSET=90          # bts1=10.0.0.91, bts2=10.0.0.92, ...
+BTS_IFACE="bts0"          # dummy interface for BTS IPs
 NGAP_PORT="38412"
 GTPU_PORT="2152"
 
@@ -78,6 +82,20 @@ instance_upf_ip() {
 instance_gateway() {
     local id="$1"
     echo "${DEFAULT_BASE_SUBNET}.${id}.1"
+}
+
+# BTS-facing IP (what external gNB connects to)
+instance_bts_ip() {
+    local id="$1"
+    echo "${BTS_IP_BASE}.$((BTS_IP_OFFSET + id))"
+}
+
+# Ensure the dummy interface for BTS IPs exists
+ensure_bts_iface() {
+    if ! ip link show "$BTS_IFACE" >/dev/null 2>&1; then
+        ip link add "$BTS_IFACE" type dummy
+        ip link set "$BTS_IFACE" up
+    fi
 }
 
 # Wait for a TCP port to become available

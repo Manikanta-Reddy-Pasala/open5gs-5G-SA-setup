@@ -32,8 +32,7 @@ show_instance() {
     local mongo_ip=$(get_host_mongo_ip)
     local db_name="open5gs"
     local host_ip=$(hostname -I | awk '{print $1}')
-    local host_ngap=$((38411 + id))
-    local host_gtpu=$((2151 + id))
+    local bts_ip=$(instance_bts_ip "$id")
 
     hdr ""
     hdr "  ═══ Instance: ${name} ═══"
@@ -55,9 +54,9 @@ show_instance() {
     done
 
     echo ""
-    echo "${BOLD}External BTS Access:${NC}"
-    log "  NGAP/SCTP: ${host_ip}:${host_ngap}"
-    log "  GTP-U/UDP: ${host_ip}:${host_gtpu}"
+    echo "${BOLD}External BTS Access (IP-based routing):${NC}"
+    log "  NGAP/SCTP: ${bts_ip}:${NGAP_PORT}"
+    log "  GTP-U/UDP: ${bts_ip}:${GTPU_PORT}"
     log "  WebUI:     http://${host_ip}:${webui_port}"
 
     echo ""
