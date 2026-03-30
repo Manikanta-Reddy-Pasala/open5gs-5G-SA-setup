@@ -1,9 +1,9 @@
-db_uri: mongodb://db/open5gs
+db_uri: mongodb://MONGO_HOST_PLACEHOLDER/open5gs
 
 logger:
   file:
     path: /var/log/open5gs/pcf.log
-  level: debug
+  level: info
 
 pcf:
   sbi:

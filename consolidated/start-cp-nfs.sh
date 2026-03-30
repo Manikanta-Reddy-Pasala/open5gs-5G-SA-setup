@@ -4,6 +4,8 @@
 # ============================================================
 # NRF must start first (service registry). All other 9 NFs launch
 # in parallel — they have built-in NRF retry logic.
+#
+# MongoDB runs on the HOST — DB_URI env var points to host IP.
 # ============================================================
 
 set -uo pipefail
@@ -28,10 +30,12 @@ wait_port() {
 }
 
 wait_mongo() {
+    # Extract MongoDB host from DB_URI or NRF config
+    local mongo_host="mongohost"
     local max=60 tries=0
     local max_tries=$((max * 5))
-    log "Waiting for MongoDB..."
-    while ! (echo > /dev/tcp/db/27017) 2>/dev/null; do
+    log "Waiting for MongoDB (${mongo_host}:27017)..."
+    while ! (echo > /dev/tcp/${mongo_host}/27017) 2>/dev/null; do
         sleep 0.2; tries=$((tries+1))
         [ $tries -ge $max_tries ] && { log "WARNING: MongoDB not ready after ${max}s"; break; }
     done
@@ -39,7 +43,7 @@ wait_mongo() {
     log "  MongoDB ready (${ms}ms)"
 }
 
-# ── 0. Wait for MongoDB ──────────────────────────────────────
+# ── 0. Wait for MongoDB (on host) ────────────────────────────
 wait_mongo
 
 # ── 1. NRF (must be first — service registry) ────────────────
@@ -47,7 +51,7 @@ log "Starting NRF (port 7777)..."
 "$BINDIR/open5gs-nrfd" -c "$CFGDIR/nrf.yaml" >> "$LOGDIR/nrf.log" 2>&1 &
 wait_port 127.0.0.1 7777
 
-# ── 2. ALL other NFs in parallel (they retry NRF registration) ─
+# ── 2. ALL other NFs in parallel ──────────────────────────────
 log "Starting SCP + UDR + UDM + AUSF + PCF + BSF + NSSF + SMF + AMF..."
 "$BINDIR/open5gs-scpd"  -c "$CFGDIR/scp.yaml"  >> "$LOGDIR/scp.log"  2>&1 &
 "$BINDIR/open5gs-udrd"  -c "$CFGDIR/udr.yaml"  >> "$LOGDIR/udr.log"  2>&1 &
@@ -59,7 +63,6 @@ log "Starting SCP + UDR + UDM + AUSF + PCF + BSF + NSSF + SMF + AMF..."
 "$BINDIR/open5gs-smfd"  -c "$CFGDIR/smf.yaml"  >> "$LOGDIR/smf.log"  2>&1 &
 "$BINDIR/open5gs-amfd"  -c "$CFGDIR/amf.yaml"  >> "$LOGDIR/amf.log"  2>&1 &
 
-# Wait for all 9 to bind their ports
 wait_port 127.0.0.1 7778   # SCP
 wait_port 127.0.0.1 7786   # UDR
 wait_port 127.0.0.1 7785   # UDM
@@ -82,6 +85,6 @@ log "  NGAP: 38412 (SCTP)"
 log "========================================="
 log ""
 
-# Keep container alive — wait for any process to exit
+# Keep container alive
 wait -n 2>/dev/null || wait
 log "One or more NFs exited. Container stopping."

@@ -1,0 +1,101 @@
+# ============================================================
+# Build open5GS from source (NO UERANSIM)
+# ============================================================
+# Build:
+#   docker build -f Dockerfile.build-all -t open5gs-builder:v2.7.5 .
+# Extract:
+#   docker run --rm -v $(pwd)/build-output:/export open5gs-builder:v2.7.5
+# ============================================================
+
+FROM ubuntu:22.04 AS open5gs-builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git cmake make gcc g++ \
+    python3-pip python3-setuptools python3-wheel \
+    flex bison \
+    libgnutls28-dev libgcrypt-dev libssl-dev \
+    libidn11-dev libmongoc-dev libbson-dev \
+    libsctp-dev libmicrohttpd-dev \
+    libcurl4-openssl-dev libnghttp2-dev \
+    libyaml-dev libtalloc-dev \
+    libmaxminddb-dev libldns-dev \
+    iproute2 ca-certificates wget pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip3 install --upgrade meson ninja
+
+WORKDIR /src
+
+# Clone open5GS source
+ARG OPEN5GS_VERSION=v2.7.5
+RUN git clone --depth 1 -b ${OPEN5GS_VERSION} https://github.com/open5gs/open5gs.git /src/open5gs
+
+WORKDIR /src/open5gs
+
+# ── AMF fork: inject cnode outbound registration + health-check client ──
+RUN mkdir -p /src/open5gs/src/amf/cnode
+COPY NFs/amf/cnode/amf_cnode.h /src/open5gs/src/amf/cnode/amf_cnode.h
+COPY NFs/amf/cnode/amf_cnode.c /src/open5gs/src/amf/cnode/amf_cnode.c
+
+RUN python3 - <<'PYEOF'
+# Patch AMF meson.build and init.c for cnode
+with open('/src/open5gs/src/amf/meson.build', 'r') as f:
+    s = f.read()
+s = s.replace('    amf-sm.c', '    cnode/amf_cnode.c\n    amf-sm.c', 1)
+s = s.replace(
+    'dependencies : [libmetrics_dep,',
+    'dependencies : [dependency(\'threads\'), libmetrics_dep,',
+    1)
+with open('/src/open5gs/src/amf/meson.build', 'w') as f:
+    f.write(s)
+
+with open('/src/open5gs/src/amf/init.c', 'r') as f:
+    s = f.read()
+s = s.replace(
+    '#include "metrics.h"',
+    '#include "metrics.h"\n#include "cnode/amf_cnode.h"',
+    1)
+s = s.replace(
+    '    thread = ogs_thread_create(amf_main, NULL);',
+    '    rv = amf_cnode_start();\n'
+    '    if (rv != OGS_OK) return rv;\n\n'
+    '    thread = ogs_thread_create(amf_main, NULL);',
+    1)
+s = s.replace(
+    '    ngap_close();\n    amf_sbi_close();',
+    '    amf_cnode_stop();\n    ngap_close();\n    amf_sbi_close();',
+    1)
+with open('/src/open5gs/src/amf/init.c', 'w') as f:
+    f.write(s)
+print("AMF cnode patch applied successfully")
+PYEOF
+
+RUN grep -n "cnode/amf_cnode.c" /src/open5gs/src/amf/meson.build && \
+    grep -n "amf_cnode_start" /src/open5gs/src/amf/init.c && \
+    grep -n "amf_cnode_stop"  /src/open5gs/src/amf/init.c && \
+    echo "All AMF cnode patches verified"
+
+RUN meson setup build --prefix=/output \
+      --libdir=lib \
+      --bindir=bin \
+      -Dc_args="-O2" && \
+    ninja -C build -j$(nproc) && \
+    ninja -C build install
+
+# ── Export binaries (no UERANSIM) ─────────────────────────────
+FROM ubuntu:22.04 AS export
+
+WORKDIR /output
+
+COPY --from=open5gs-builder /output/bin/ ./open5gs/bin/
+COPY --from=open5gs-builder /output/lib/ ./open5gs/lib/
+
+RUN echo "=== open5GS Build (no UERANSIM) ===" > /output/BUILD_MANIFEST.txt && \
+    echo "Built at: $(date -u)" >> /output/BUILD_MANIFEST.txt && \
+    echo "" >> /output/BUILD_MANIFEST.txt && \
+    echo "open5GS binaries:" >> /output/BUILD_MANIFEST.txt && \
+    ls -la /output/open5gs/bin/ >> /output/BUILD_MANIFEST.txt
+
+CMD ["cp", "-r", "/output/.", "/export/"]

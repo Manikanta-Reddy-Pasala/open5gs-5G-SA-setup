@@ -17,7 +17,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /open5gs
 
-# Copy all CP NF binaries
 COPY build-output/open5gs/bin/open5gs-nrfd  ./
 COPY build-output/open5gs/bin/open5gs-scpd  ./
 COPY build-output/open5gs/bin/open5gs-amfd  ./
@@ -29,11 +28,9 @@ COPY build-output/open5gs/bin/open5gs-pcfd  ./
 COPY build-output/open5gs/bin/open5gs-nssfd ./
 COPY build-output/open5gs/bin/open5gs-bsfd  ./
 
-# Copy open5GS shared libraries directly to /usr/local/lib/ (standard ldconfig path)
 COPY build-output/open5gs/lib/ /usr/local/lib/
 RUN ldconfig
 
-# Copy startup script
 COPY consolidated/start-cp-nfs.sh ./start-cp-nfs.sh
 RUN chmod +x ./start-cp-nfs.sh ./open5gs-*
 
