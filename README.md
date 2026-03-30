@@ -1,166 +1,146 @@
-# open5GS 5G SA Core - Portable Docker Deployment
+# open5GS 5G SA Core - Multi-BTS Docker Deployment
 
-A fully self-contained 5G Standalone (SA) core network built from source using [open5GS](https://open5gs.org/) v2.7.5, mirroring the free5gc-5G-SA-setup structure. Runs as 5 Docker containers with a single management script.
-
----
-
-## What is open5GS?
-
-[open5GS](https://open5gs.org/) is an open-source C-language implementation of the 5G Core and EPC (4G) specifications. It implements the full 5G SA core including NRF, AMF, SMF, UPF, UDM, UDR, AUSF, PCF, NSSF, BSF, and SCP. Unlike free5GC (Go), open5GS is written in C using the meson build system and ships a built-in WebUI for subscriber management.
+A multi-instance 5G Standalone (SA) core network built from source using [open5GS](https://open5gs.org/) v2.7.5. Supports running **multiple independent CN (Core Network) sets** on a single host, each serving its own BTS (gNB), sharing a single host MongoDB.
 
 ---
 
 ## Architecture
 
 ```
-                        ┌─────────────────────────────────────────────┐
-                        │          open5gs-cp (10.200.100.16)          │
-  ┌──────────────┐      │                                               │
-  │ open5gs-     │      │  NRF:7777  SCP:7778  AMF:7780  SMF:7781     │
-  │ mongodb      │◄─────│  PCF:7782  NSSF:7783 AUSF:7784 UDM:7785     │
-  │ (MongoDB)    │      │  UDR:7786  BSF:7787                           │
-  └──────────────┘      │                                               │
-                        │  NGAP/SCTP: 38412 (to gNB)                  │
-                        │  AMF dials OUT → cnode server (no inbound)  │
-                        └──────────────┬──────────────────────────────┘
-                                       │ PFCP
-                        ┌──────────────▼──────────────────────────────┐
-                        │          open5gs-upf (10.200.100.17)         │
-  ┌──────────────┐      │                                               │
-  │ open5gs-     │      │  GTP-U tunnel                                 │
-  │ webui        │      │  ogstun: 10.206.0.1/16 (UE subnet)          │
-  │ (port 4000)  │      │  iptables NAT → internet                     │
-  └──────────────┘      └──────────────────────────────────────────────┘
-                                       │
-                        ┌──────────────▼──────────────────────────────┐
-                        │    UERANSIM (optional, --profile ueransim)   │
-                        │    nr-gnb + nr-ue simulator                  │
-                        └─────────────────────────────────────────────┘
+  Host VM (135.181.93.114)
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │                                                                      │
+  │  MongoDB 7.0 (host)  ◄──── all instances share one DB (open5gs)     │
+  │  localhost:27017                                                      │
+  │                                                                      │
+  │  Dummy interface: bts0                                               │
+  │    10.0.0.91/32  ──► BTS1 CN                                        │
+  │    10.0.0.92/32  ──► BTS2 CN                                        │
+  │    10.0.0.93/32  ──► BTS3 CN                                        │
+  │    10.0.0.94/32  ──► BTS4 CN                                        │
+  │                                                                      │
+  │  ┌─── BTS1 (10.200.1.0/24) ───┐  ┌─── BTS2 (10.200.2.0/24) ───┐  │
+  │  │ bts1-cp   10.200.1.16      │  │ bts2-cp   10.200.2.16      │  │
+  │  │ bts1-upf  10.200.1.17      │  │ bts2-upf  10.200.2.17      │  │
+  │  │ bts1-webui :4001            │  │ bts2-webui :4002            │  │
+  │  └─────────────────────────────┘  └─────────────────────────────┘  │
+  │  ┌─── BTS3 (10.200.3.0/24) ───┐  ┌─── BTS4 (10.200.4.0/24) ───┐  │
+  │  │ bts3-cp   10.200.3.16      │  │ bts4-cp   10.200.4.16      │  │
+  │  │ bts3-upf  10.200.3.17      │  │ bts4-upf  10.200.4.17      │  │
+  │  │ bts3-webui :4003            │  │ bts4-webui :4004            │  │
+  │  └─────────────────────────────┘  └─────────────────────────────┘  │
+  └──────────────────────────────────────────────────────────────────────┘
 
-  Docker network: open5gs-net (10.200.100.0/24), bridge: br-open5gs
-  UE subnet:      10.206.0.0/16 (ogstun TUN interface on UPF)
+  Each gNB connects to its CN via a unique IP, same standard ports:
+    BTS1 gNB  ──►  10.0.0.91:38412 (NGAP/SCTP)  +  10.0.0.91:2152 (GTP-U)
+    BTS2 gNB  ──►  10.0.0.92:38412               +  10.0.0.92:2152
+    BTS3 gNB  ──►  10.0.0.93:38412               +  10.0.0.93:2152
+    BTS4 gNB  ──►  10.0.0.94:38412               +  10.0.0.94:2152
 ```
+
+### How IP-based routing works
+
+1. A Linux **dummy interface** (`bts0`) is created on the host
+2. Each BTS instance gets a `/32` IP added to `bts0`: `10.0.0.<90 + ID>`
+3. **iptables DNAT** rules match on destination IP (not port), forwarding to the correct Docker bridge:
+   - `10.0.0.91:38412` (SCTP) → `10.200.1.16:38412` (bts1 AMF)
+   - `10.0.0.91:2152` (UDP) → `10.200.1.17:2152` (bts1 UPF)
+4. All BTS use **standard ports** (`38412`/`2152`) — only the IP differs
 
 ---
 
-## Quick Start (5 Commands)
+## Quick Start
 
 ```bash
-# 1. Build everything from source (~20 minutes first time)
-./open5gs.sh build
+# 1. Build open5GS from source (first time only, ~20 min)
+./build.sh
 
-# 2. Start the core (use --sst / --sd to override slice at runtime)
-./open5gs.sh start
-# ./open5gs.sh start --sst 1 --sd 111111   # override slice
+# 2. Build Docker images (CP, UPF, WebUI)
+./docker.sh
 
-# 3. Provision the default test subscriber
-./open5gs.sh provision
+# 3. Start a CN instance for BTS 1
+./start.sh --id 1
 
-# 4. Check all NFs are running
-./open5gs.sh status
+# 4. Provision the default test subscriber
+./provision.sh
 
-# 5. Start UERANSIM to simulate a gNB + UE
-./open5gs.sh start --ueransim
+# 5. Check status
+./status.sh --id 1
+
+# 6. Start more instances
+./start.sh --id 2
+./start.sh --id 3
+./start.sh --id 4
+
+# 7. Check all instances
+./status.sh --all
 ```
 
 ---
 
-## All Commands Reference
+## Scripts Reference
 
-### Build
-
-| Command | Description |
+| Script | Description |
 |---|---|
-| `./open5gs.sh build` | Full source compile of open5GS + UERANSIM (~20 min) |
-| `./open5gs.sh build --quick` | Rebuild Docker runtime images only (skip source compile) |
-
-### Run
-
-| Command | Description |
-|---|---|
-| `./open5gs.sh start` | Start core (MongoDB + CP + UPF + WebUI) |
-| `./open5gs.sh start --ueransim` | Start core + UERANSIM gNB simulator |
-| `./open5gs.sh start --debug` | Start with debug-level logging |
-| `./open5gs.sh start --mcc 404 --mnc 30 --tac 1` | Start with custom single PLMN |
-| `./open5gs.sh start --plmn 404:30 --plmn 404:20 --tac 1` | Start with multiple PLMNs |
-| `./open5gs.sh start --sst 1 --sd 111111` | Start with custom slice (SST/SD) |
-| `./open5gs.sh stop` | Stop all containers |
-| `./open5gs.sh remove` | Remove all containers and volumes |
-
-### Subscribers
-
-| Command | Description |
-|---|---|
-| `./open5gs.sh provision` | Provision the default test subscriber |
-| `./open5gs.sh bulk-provision --count 10` | Provision 10 subscribers (incremented IMSIs) |
-| `./open5gs.sh bulk-provision --count 5 --same-key` | Provision 5 subscribers sharing the same K |
-
-### UE (UERANSIM)
-
-| Command | Description |
-|---|---|
-| `./open5gs.sh ue start` | Launch UE simulator inside UERANSIM container |
-| `./open5gs.sh ue stop` | Stop UE simulator |
-| `./open5gs.sh ue status` | Check UE PDU session status |
-
-### Monitor
-
-| Command | Description |
-|---|---|
-| `./open5gs.sh status` | Full status: containers, NRF registrations, network, subscribers |
-| `./open5gs.sh logs` | Tail all container logs |
-| `./open5gs.sh logs amf` | Tail AMF log only |
-| `./open5gs.sh logs smf` | Tail SMF log |
-| `./open5gs.sh logs upf` | Tail UPF log |
-| `./open5gs.sh logs nrf` | Tail NRF log |
-| `./open5gs.sh logs gnb` | Tail UERANSIM gNB log |
+| `env.sh` | Shared environment variables, helper functions, colors |
+| `build.sh` | Compile open5GS from source (meson/ninja) |
+| `docker.sh` | Build Docker images: CP, UPF, WebUI |
+| `start.sh --id N` | Start CN instance N (creates network, containers, iptables) |
+| `stop.sh --id N` | Stop CN instance N |
+| `stop.sh --id N --rm` | Stop and fully remove instance (containers + iptables + BTS IP) |
+| `stop.sh --all [--rm]` | Stop/remove all instances |
+| `status.sh --id N` | Show instance status (containers, NFs, connectivity) |
+| `status.sh --all` | Show all instances status |
+| `provision.sh` | Provision default test subscriber |
+| `provision.sh --count 10` | Bulk provision 10 subscribers |
+| `logs.sh --id N` | Tail all container logs for instance N |
+| `logs.sh --id N amf` | Tail AMF log only |
 
 ---
 
-## Container Architecture
+## Per-Instance Networking
+
+Each instance gets its own isolated Docker bridge network:
+
+| Instance | Docker Subnet | CP IP | UPF IP | BTS IP | WebUI | UE Pool |
+|---|---|---|---|---|---|---|
+| bts1 | `10.200.1.0/24` | `10.200.1.16` | `10.200.1.17` | `10.0.0.91` | `:4001` | `10.206.0.0/16` |
+| bts2 | `10.200.2.0/24` | `10.200.2.16` | `10.200.2.17` | `10.0.0.92` | `:4002` | `10.207.0.0/16` |
+| bts3 | `10.200.3.0/24` | `10.200.3.16` | `10.200.3.17` | `10.0.0.93` | `:4003` | `10.208.0.0/16` |
+| bts4 | `10.200.4.0/24` | `10.200.4.16` | `10.200.4.17` | `10.0.0.94` | `:4004` | `10.209.0.0/16` |
+
+**Pattern**: Instance N → subnet `10.200.N.0/24`, BTS IP `10.0.0.<90+N>`, WebUI port `4000+N`, UE pool `10.<205+N>.0.0/16`
+
+---
+
+## Containers per Instance
+
+Each CN instance runs **3 containers**:
 
 | Container | Image | Role | Fixed IP |
 |---|---|---|---|
-| `open5gs-mongodb` | `mongo:6.0` | Subscriber database | DHCP |
-| `open5gs-cp` | `open5gs-cp-local:v2.7.5` | All 10 CP NFs | 10.200.100.16 |
-| `open5gs-upf` | `open5gs-upf-local:v2.7.5` | User plane / GTP-U | 10.200.100.17 |
-| `open5gs-webui` | `open5gs-webui-local:v2.7.5` | Subscriber management UI | DHCP |
-| `open5gs-ueransim` | `open5gs-ueransim-local:latest` | gNB + UE simulator (optional) | DHCP |
+| `btsN-cp` | `open5gs-cp-local:v2.7.5` | All 10 CP NFs (NRF, SCP, AMF, SMF, PCF, NSSF, AUSF, UDM, UDR, BSF) | `10.200.N.16` |
+| `btsN-upf` | `open5gs-upf-local:v2.7.5` | User Plane Function (GTP-U tunnel) | `10.200.N.17` |
+| `btsN-webui` | `open5gs-webui-local:v2.7.5` | Subscriber management UI | DHCP |
 
-All containers share the `open5gs-net` bridge network (`10.200.100.0/24`, bridge `br-open5gs`).
+MongoDB runs on the **host** (not in Docker). Containers reach it via the Docker bridge gateway (`172.17.0.1:27017`).
 
 ---
 
-## NF Ports
+## NF Ports (inside CP container)
 
 | NF | SBI Port | Notes |
 |---|---|---|
 | NRF | 7777 | Network Repository Function - central registry |
 | SCP | 7778 | Service Communication Proxy |
-| AMF | 7780 | Access & Mobility Management; NGAP on 38412/sctp |
-| SMF | 7781 | Session Management |
+| AMF | 7780 | Access & Mobility Management; NGAP on 38412/SCTP |
+| SMF | 7781 | Session Management; PFCP to UPF |
 | PCF | 7782 | Policy Control |
 | NSSF | 7783 | Network Slice Selection |
 | AUSF | 7784 | Authentication Server |
 | UDM | 7785 | Unified Data Management |
 | UDR | 7786 | Unified Data Repository |
 | BSF | 7787 | Binding Support Function |
-| Metrics | 9090-9093 | Prometheus metrics (AMF/SMF/PCF/UPF) |
-
----
-
-## Network Configuration
-
-| Parameter | Value |
-|---|---|
-| Docker network | `open5gs-net` |
-| Subnet | `10.200.100.0/24` |
-| Bridge name | `br-open5gs` |
-| CP container IP | `10.200.100.16` |
-| UPF container IP | `10.200.100.17` |
-| UE subnet (ogstun) | `10.206.0.0/16` |
-| NGAP port | `38412/sctp` |
-| WebUI port | `4000` |
 
 ---
 
@@ -169,104 +149,71 @@ All containers share the `open5gs-net` bridge network (`10.200.100.0/24`, bridge
 | Field | Value |
 |---|---|
 | IMSI | `001010000050641` |
-| SUPI | `imsi-001010000050641` |
-| MCC | `001` |
-| MNC | `01` |
 | K (key) | `0c57e15a2cb86087097a6b50d42531de` |
 | OPC | `109ee52735ae6d3849112cf4175029c7` |
 | AMF | `8000` |
 | SST | `3` |
 | SD | `198153` |
 | DNN | `internet` |
+| MCC/MNC | `001`/`01` |
 | TAC | `1` |
 
----
-
-## UERANSIM Usage
-
-UERANSIM simulates a 5G gNB (base station) and UE (phone).
-
-```bash
-# Start core + UERANSIM gNB
-./open5gs.sh start --ueransim
-
-# Provision the subscriber first
-./open5gs.sh provision
-
-# Start the UE (attach to network)
-./open5gs.sh ue start
-
-# Check UE PDU session
-./open5gs.sh ue status
-
-# Test data connectivity from inside the UE container
-docker exec -it open5gs-ueransim bash
-# Inside container:
-./nr-cli imsi-001010000050641 --exec "ps-list"
-```
-
-The gNB config is at `config/gnb.yaml`, UE config at `config/ue.yaml`. Both connect to the AMF at `open5gs-cp:38412`.
-
----
-
-## WebUI
-
-The open5GS WebUI provides a browser-based subscriber management interface.
-
-- **URL**: `http://<host-ip>:4000`
-- **Login**: `admin` / `1423`
-- **Features**: Add/edit/delete subscribers, view sessions, manage slices
-
-The WebUI connects directly to MongoDB and provides a visual alternative to CLI provisioning.
+All instances share the same subscriber database (`open5gs`).
 
 ---
 
 ## Build Process
 
-The build uses a multi-stage Docker approach:
+### Source compilation (`build.sh`)
 
-1. **Stage 1** (`Dockerfile.build-all`, open5gs-builder): Ubuntu 22.04, installs build deps, clones open5GS v2.7.5, compiles with meson/ninja, installs to `/output`
-2. **Stage 2** (`Dockerfile.build-all`, ueransim-builder): Installs CMake 3.28.3, clones UERANSIM master, builds with make
-3. **Stage 3** (`Dockerfile.build-all`, export): Collects all binaries into `/output`, CMD copies to mounted `/export`
-4. **Runtime images**: `Dockerfile.cp-local`, `Dockerfile.upf-local`, `Dockerfile.ueransim-local` copy binaries from `build-output/` into minimal Ubuntu 22.04 runtime images
+Builds open5GS v2.7.5 from source using a multi-stage Docker build:
+
+1. **Builder stage** (`Dockerfile.build-all`): Ubuntu 22.04, installs deps, clones open5GS, applies AMF cnode patches, compiles with meson/ninja
+2. **Export stage**: Copies binaries to `build-output/`
 
 ```
 build-output/
   open5gs/
-    bin/     ← open5gs-amfd, open5gs-smfd, open5gs-nrfd, ...
-    lib/     ← shared libraries
-  ueransim/
-    nr-gnb, nr-ue, nr-cli
-    binder/  ← nr-binder, libdevbnd.so
+    bin/     # open5gs-amfd, open5gs-smfd, open5gs-nrfd, ...
+    lib/     # shared libraries
   BUILD_MANIFEST.txt
 ```
 
+### Docker images (`docker.sh`)
+
+| Dockerfile | Image | Description |
+|---|---|---|
+| `Dockerfile.cp-local` | `open5gs-cp-local:v2.7.5` | CP runtime (all 10 NFs) |
+| `Dockerfile.upf-local` | `open5gs-upf-local:v2.7.5` | UPF runtime |
+| `Dockerfile.webui` | `open5gs-webui-local:v2.7.5` | WebUI (Node.js/Next.js) |
+
+UERANSIM is **not** included in the Docker images.
+
 ---
 
-## AMF Custom Fork — cnode Registration & Health Check
+## WebUI
 
-This repo ships a **forked open5GS AMF** with an outbound cnode client grafted in, implementing the same registration + health-check protocol as the working MME (`CnmSendNodeType` / `sendData` / `recvData`).
+Each instance runs its own WebUI for subscriber management:
 
-### Architecture
+- **URL**: `http://<host-ip>:<4000 + instance_id>`
+- **Login**: `admin` / `1423`
+- **Features**: Add/edit/delete subscribers, view sessions, manage slices
 
-The AMF dials **out** to the cnode registration server — there is **no inbound TCP server** on the AMF. Health checks flow back on the same persistent connection:
+---
 
-```
-AMF  ──(TCP dial)────────────────────►  cnode server
-AMF  ──NodeType_Message { AMF(13) }──►  server registers the AMF
-                                         server sends HealthCheckRequest
-AMF  ◄──────HealthCheckRequest ──────── (same TCP connection)
-AMF  ──────HealthCheckResponse ─────►   { status: SERVING }
-         (reconnects with exponential backoff: 1→2→4→…→30 s)
-```
+## AMF Custom Fork - cnode Registration & Health Check
 
-### Wire Format
-
-Matches MME `sendData()` / `recvData()` exactly — **fixed 4-byte LE length header**:
+This repo ships a **forked open5GS AMF** with an outbound cnode client. The AMF dials **out** to a cnode registration server (no inbound TCP server on AMF).
 
 ```
-[ uint32_t payload_length (4 bytes, native little-endian) ][ proto payload ]
+AMF  ──(TCP dial)──────────────────►  cnode server
+AMF  ──NodeType_Message { AMF=13 }─►  server registers AMF
+     ◄──HealthCheckRequest ─────────  server sends health check
+AMF  ──HealthCheckResponse ────────►  { status: SERVING }
+     (reconnects with exponential backoff: 1→2→4→...→30s)
 ```
+
+### Wire Format (4-byte LE length header)
 
 | Message | Direction | Proto bytes | Full frame |
 |---|---|---|---|
@@ -276,23 +223,13 @@ Matches MME `sendData()` / `recvData()` exactly — **fixed 4-byte LE length hea
 
 ### Configuration
 
-Set env vars in `docker-compose.yaml` under `open5gs-cp.environment`:
+Set env vars in the generated `docker-compose.yaml` (or override in `start.sh`):
 
 | Env var | Default | Description |
 |---|---|---|
-| `AMF_CNODE_ENABLE` | `1` | `1` = enabled, any other value = disabled |
-| `AMF_CNODE_SERVER_IP` | _(unset)_ | cnode server IPv4 — **required to activate** |
+| `AMF_CNODE_ENABLE` | `1` | `1` = enabled |
+| `AMF_CNODE_SERVER_IP` | _(unset)_ | cnode server IPv4 (required to activate) |
 | `AMF_CNODE_SERVER_PORT` | `9090` | cnode server TCP port |
-
-If `AMF_CNODE_SERVER_IP` is unset the client is silently disabled and AMF starts normally.
-
-**Example:**
-```yaml
-# docker-compose.yaml, under open5gs-cp environment:
-AMF_CNODE_ENABLE: "1"
-AMF_CNODE_SERVER_IP: "192.168.1.100"
-AMF_CNODE_SERVER_PORT: "9090"
-```
 
 ### Fork structure
 
@@ -300,325 +237,18 @@ AMF_CNODE_SERVER_PORT: "9090"
 NFs/amf/
 └── cnode/
     ├── amf_cnode.h   # Public API: amf_cnode_start() / amf_cnode_stop()
-    └── amf_cnode.c   # Outbound client: dial, NodeType_Message, poll loop, backoff
+    └── amf_cnode.c   # Outbound client: dial, register, poll loop, backoff
 ```
 
-Patches applied by `Dockerfile.build-all` at build time (**two files only**):
-
-| File | Change |
-|---|---|
-| `src/amf/meson.build` | Add `cnode/amf_cnode.c` to sources + `dependency('threads')` |
-| `src/amf/init.c` | `#include "cnode/amf_cnode.h"`; call `amf_cnode_start()` on init, `amf_cnode_stop()` on terminate |
-
-No upstream open5GS files are stored in this repo — only the cnode source and the patch script in `Dockerfile.build-all`.
-
-### Testing with the mock server
-
-`tests/cnode_mock_server.py` is a standalone Python server that implements the cnode server side. Use it to test the AMF registration + health-check flow without a real cnode deployment.
-
-#### Quick test (one connection, 3 health checks)
+### Testing with mock server
 
 ```bash
-# Terminal 1 — start mock server on port 9090
-python3 tests/cnode_mock_server.py --port 9090
-
-# Terminal 2 — start open5gs with cnode pointed at the mock server
-# (add to docker-compose.yaml under open5gs-cp environment, then start)
-AMF_CNODE_SERVER_IP=<host-ip>  AMF_CNODE_SERVER_PORT=9090 ./open5gs.sh start
-```
-
-Expected mock server output:
-```
-[mock cnode server] listening on 0.0.0.0:9090
-[mock cnode server] session 1: connection from 10.200.100.16:xxxxx
-  [server] ✓ NodeType_Message  nodetype=13 (AMF)
-           frame: [02 00 00 00 08 0d]
-  [server] → HealthCheckRequest  frame: [02 00 00 00 0a 00]
-  [server] ← HealthCheckResponse  status=1 (SERVING) ✓
-           frame: [02 00 00 00 08 01]
-  ... (repeated --count times)
-[mock cnode server] session 1: ✅ PASS
-```
-
-#### Test reconnect / backoff
-
-```bash
-# Start server that loops, accepting multiple reconnects
-python3 tests/cnode_mock_server.py --port 9090 --loop --count 2 --interval 1
-
-# Kill and restart the server mid-session to observe AMF reconnect with backoff
-# AMF log will show:
-#   [AMF-cnode] session ended; reconnecting in 1s
-#   [AMF-cnode] connected to <ip>:9090
-#   [AMF-cnode] registered as AMF ...
-```
-
-#### Standalone wire-format test (no Docker needed)
-
-Runs C binary directly against the mock server to verify wire format without a full open5gs build:
-
-```bash
-# Terminal 1
-python3 tests/cnode_mock_server.py --port 9090 --count 1
-
-# Terminal 2 — compile and run the standalone C test client
-gcc -o /tmp/cnode_test tests/cnode_mock_server.py  # (see below — use the C file)
-# or run TC09 which includes a self-contained handshake simulation:
-bash tests/tc09_amf_health_check.sh
-```
-
-#### Mock server options
-
-| Flag | Default | Description |
-|---|---|---|
-| `--port` | `9090` | TCP port to listen on |
-| `--interval` | `2.0` | Seconds between health checks |
-| `--count` | `3` | Health checks per session (`0` = infinite) |
-| `--loop` | off | Keep accepting new connections after disconnect |
-
----
-
-## Comparison: open5GS vs free5GC
-
-| Feature | open5GS | free5GC |
-|---|---|---|
-| Language | C | Go |
-| Build system | meson + ninja | Go modules |
-| Version | v2.7.5 | v3.x |
-| NRF | open5gs-nrfd | nrf |
-| SCP | open5gs-scpd | scp |
-| AMF | open5gs-amfd | amf |
-| SMF | open5gs-smfd | smf |
-| UPF | open5gs-upfd | upf (C, separate) |
-| AUSF | open5gs-ausfd | ausf |
-| UDM | open5gs-udmd | udm |
-| UDR | open5gs-udrd | udr |
-| PCF | open5gs-pcfd | pcf |
-| NSSF | open5gs-nssfd | nssf |
-| BSF | open5gs-bsfd | (not in free5GC) |
-| WebUI | Built-in (Node.js/Next.js) | Separate webui container |
-| Database | MongoDB (subscribers + PCF + BSF) | MongoDB (subscribers only) |
-| UE subnet | 10.206.0.0/16 (ogstun) | 10.60.0.0/24 (upfgtp) |
-| Config format | YAML | YAML |
-| Docker network | 10.200.100.0/24 | 10.100.200.0/24 |
-| CP IP | 10.200.100.16 | 10.100.200.16 |
-| UPF IP | 10.200.100.17 | 10.100.200.17 |
-| Health check | AMF cnode outbound client (forked) | AMF cnode outbound client (forked) |
-| NGAP port | 38412 | 38412 |
-| WebUI port | 4000 | 5000 |
-
----
-
-## Multi-PLMN Configuration
-
-open5GS AMF natively supports multiple PLMNs. Each PLMN gets its own entry in `guami`, `tai`, and `plmn_support`.
-
-### Via command line (runtime override)
-
-```bash
-# Single PLMN (original behaviour)
-./open5gs.sh start --mcc 001 --mnc 01 --tac 1
-
-# Multiple PLMNs sharing the same TAC
-./open5gs.sh start --plmn 001:01 --plmn 404:30 --tac 1
-
-# Multiple PLMNs + custom slice
-./open5gs.sh start --plmn 001:01 --plmn 404:30 --tac 1 --sst 1 --sd 111111
-```
-
-`--plmn MCC:MNC` can be repeated as many times as needed. All PLMNs share the same TAC and slice. The gNB (`config/gnb.yaml`) and UE (`config/ue.yaml`) are updated to use the **first** PLMN's MCC/MNC.
-
-### Via config file (permanent)
-
-Edit `config/amf.yaml` and uncomment/add entries in each of the three sections:
-
-```yaml
-guami:
-  - plmn_id: { mcc: 001, mnc: 01 }
-    amf_id:  { region: 2, set: 1 }
-  - plmn_id: { mcc: 404, mnc: 30 }
-    amf_id:  { region: 2, set: 1 }
-tai:
-  - plmn_id: { mcc: 001, mnc: 01 }
-    tac: 1
-  - plmn_id: { mcc: 404, mnc: 30 }
-    tac: 1
-plmn_support:
-  - plmn_id: { mcc: 001, mnc: 01 }
-    s_nssai: [{ sst: 3, sd: 198153 }]
-  - plmn_id: { mcc: 404, mnc: 30 }
-    s_nssai: [{ sst: 3, sd: 198153 }]
-```
-
-Verify with `./open5gs.sh status` — the PLMN Configuration table lists all configured PLMNs:
-
-```
-PLMN Configuration:
-  MCC    MNC    TAC(s)       Slices
-  ────────────────────────────────────────────────
-  001    01     1            SST=3 SD=198153
-  404    30     1            SST=3 SD=198153
-```
-
----
-
-## Testing with the VM (cnode cross-test)
-
-The `tests/cnode_mock_server.py` works with both **open5GS** (this repo) and the **free5GC fork** running on the dedicated VM at `135.181.93.114`. Both AMF implementations use the same wire format, so the mock server can be used to validate either.
-
-### Option A — Local mock server, open5GS AMF
-
-```bash
-# Start mock server on the local host
+# Start mock server
 python3 tests/cnode_mock_server.py --port 9090 --loop --count 5
 
-# In docker-compose.yaml, under open5gs-cp > environment, set:
-#   AMF_CNODE_SERVER_IP: "<your-host-ip>"   # e.g. 10.200.100.1
-#   AMF_CNODE_SERVER_PORT: "9090"
-./open5gs.sh start
-```
-
-Expected output: see [Testing with the mock server](#testing-with-the-mock-server).
-
-### Option B — Mock server on VM, free5GC AMF
-
-```bash
-# Copy mock server to VM
-scp -i ~/.ssh/id_ed25519 tests/cnode_mock_server.py root@135.181.93.114:/tmp/
-
-# SSH to VM and start mock server
-ssh -i ~/.ssh/id_ed25519 root@135.181.93.114 \
-    "python3 /tmp/cnode_mock_server.py --port 9090 --loop --count 5"
-
-# On the VM, set env vars in docker-compose and restart free5gc:
-#   AMF_CNODE_ENABLE=1
-#   AMF_CNODE_SERVER_IP=127.0.0.1
-#   AMF_CNODE_SERVER_PORT=9090
-```
-
-### Option C — Local open5GS AMF → mock server on VM
-
-Point the local open5GS AMF at a mock server running on the remote VM:
-
-```bash
-# 1. Start mock server on VM (listening on all interfaces)
-ssh -i ~/.ssh/id_ed25519 root@135.181.93.114 \
-    "python3 /tmp/cnode_mock_server.py --port 9090 --loop --count 10" &
-
-# 2. Configure open5gs AMF to dial the VM
-#    In docker-compose.yaml under open5gs-cp > environment:
-#      AMF_CNODE_SERVER_IP: "135.181.93.114"
-#      AMF_CNODE_SERVER_PORT: "9090"
-./open5gs.sh start
-```
-
-### Run TC09 for automated cross-stack verification
-
-TC09 (`tests/tc09_amf_health_check.sh`) includes a self-contained wire-format handshake simulation that works regardless of which AMF is under test:
-
-```bash
-# Against open5GS AMF (local)
-bash tests/tc09_amf_health_check.sh
-
-# Check cnode log from either deployment
-docker exec open5gs-cp cat /var/log/open5gs/amf.log | grep '\[AMF-cnode\]'
-# Or on VM:
-ssh -i ~/.ssh/id_ed25519 root@135.181.93.114 \
-    "docker exec free5gc-cp cat /var/log/free5gc/amf.log | grep 'AMF-cnode'"
-```
-
----
-
-## Troubleshooting
-
-### CP container not becoming healthy
-
-```bash
-# Check what's failing inside the container
-./open5gs.sh logs nrf
-./open5gs.sh logs amf
-
-# Check if MongoDB is reachable
-docker exec open5gs-cp nc -z db 27017 && echo "MongoDB OK"
-
-# Force restart
-./open5gs.sh stop && ./open5gs.sh start
-```
-
-### NRF not responding
-
-```bash
-# Direct API check inside container
-docker exec open5gs-cp wget -qO- http://127.0.0.1:7777/nnrf-nfm/v1/nf-instances
-
-# Check NRF log for errors
-docker exec open5gs-cp tail -50 /var/log/open5gs/nrf.log
-```
-
-### UPF failing to start (TUN interface)
-
-The UPF requires `NET_ADMIN` capability and `/dev/net/tun`. Ensure Docker host supports TUN:
-
-```bash
-ls -la /dev/net/tun
-# Should exist; if not: modprobe tun
-
-# Check UPF logs
-./open5gs.sh logs upf
-```
-
-### UERANSIM gNB cannot reach AMF
-
-```bash
-# Verify SCTP DNAT rules are set
-iptables -t nat -L PREROUTING -n | grep 38412
-
-# Check AMF is listening on NGAP
-docker exec open5gs-cp ss -lnp | grep 38412
-
-# Re-apply SCTP rules
-./open5gs.sh stop && ./open5gs.sh start --ueransim
-```
-
-### Subscriber not found during registration
-
-```bash
-# Check subscriber was provisioned
-./open5gs.sh status
-# Look for "Total subscribers in DB"
-
-# Re-provision
-./open5gs.sh provision
-
-# Verify in MongoDB directly
-docker exec open5gs-mongodb mongosh 'mongodb://localhost:27017/open5gs' \
-  --quiet --eval "db.subscribers.find({},{imsi:1}).forEach(printjson)"
-```
-
-### Build fails (meson version)
-
-The build image installs meson via pip3 to get the latest version. If you see meson errors:
-
-```bash
-# Check meson version inside builder
-docker run --rm open5gs-builder:v2.7.5 meson --version
-
-# Force full rebuild
-docker rmi open5gs-builder:v2.7.5
-./open5gs.sh build
-```
-
-### WebUI not loading
-
-```bash
-# Check WebUI container logs
-./open5gs.sh logs webui
-
-# Verify port binding
-docker port open5gs-webui
-
-# Check MongoDB connectivity from WebUI
-docker exec open5gs-webui nc -z db 27017 && echo "DB OK"
+# Start CN with cnode pointed at mock server
+# (set AMF_CNODE_SERVER_IP in env before start)
+./start.sh --id 1
 ```
 
 ---
@@ -627,96 +257,97 @@ docker exec open5gs-webui nc -z db 27017 && echo "DB OK"
 
 ```
 open5gs-5G-SA-setup/
-├── open5gs.sh                  # Main management script
-├── docker-compose.yaml         # Service definitions
-├── Dockerfile.build-all        # Multi-stage source builder (applies AMF fork patch)
-├── Dockerfile.cp-local         # CP runtime image
-├── Dockerfile.upf-local        # UPF runtime image
-├── Dockerfile.webui            # WebUI image (Node.js)
-├── Dockerfile.ueransim-local   # UERANSIM runtime image
+├── env.sh                    # Shared env vars & helper functions
+├── build.sh                  # Source compilation script
+├── docker.sh                 # Docker image builder
+├── start.sh                  # Start CN instance (--id N)
+├── stop.sh                   # Stop/remove CN instance
+├── status.sh                 # Instance status
+├── provision.sh              # Subscriber provisioning
+├── logs.sh                   # Log tailing
+├── Dockerfile.build-all      # Multi-stage source builder (applies AMF cnode patch)
+├── Dockerfile.cp-local       # CP runtime image
+├── Dockerfile.upf-local      # UPF runtime image
+├── Dockerfile.webui          # WebUI image (Node.js)
 ├── NFs/
 │   └── amf/
 │       └── cnode/
-│           ├── amf_cnode.h     # AMF fork: cnode client API header
-│           └── amf_cnode.c     # AMF fork: outbound registration + health-check client
+│           ├── amf_cnode.h   # AMF cnode client header
+│           └── amf_cnode.c   # AMF cnode client implementation
 ├── consolidated/
-│   ├── start-cp-nfs.sh         # CP startup script (all 10 NFs)
-│   └── start-upf.sh            # UPF startup + TUN setup
-├── config/                     # Info-level configs (default)
+│   ├── start-cp-nfs.sh       # CP container entrypoint (starts all 10 NFs)
+│   └── start-upf.sh          # UPF container entrypoint (TUN + NAT setup)
+├── config/                   # NF config templates (patched per-instance at start)
 │   ├── nrf.yaml, scp.yaml, amf.yaml, smf.yaml, upf.yaml
 │   ├── ausf.yaml, udm.yaml, udr.yaml, pcf.yaml, nssf.yaml, bsf.yaml
-│   ├── gnb.yaml                # UERANSIM gNB config
-│   └── ue.yaml                 # UERANSIM UE config
-├── config-debug/               # Debug-level configs (--debug flag)
-│   └── (same files, level: debug)
-├── build-output/               # Generated by build (git-ignored)
-│   ├── open5gs/bin/            # All open5GS NF binaries (AMF includes health check)
-│   ├── open5gs/lib/            # Shared libraries
-│   └── ueransim/               # nr-gnb, nr-ue, nr-cli
-├── tests/                      # Automated test suite
-│   ├── common.sh               # Shared helpers (provisioning, UERANSIM, PLMN detection)
-│   ├── run_all.sh              # Test runner (all or specific TCs)
-│   ├── tc01_parallel_registration.sh
-│   ├── tc02_crash_recovery.sh
-│   ├── tc03_multi_apn.sh
-│   ├── tc04_multi_ue_deregistration.sh
-│   ├── tc05_paging_idle_ue.sh
-│   ├── tc06_ue_context_release.sh
-│   ├── tc07_ran_config_update.sh
-│   ├── tc08_ng_reset.sh
-│   ├── tc09_amf_health_check.sh
-│   ├── tc10_memory_leak.sh
-│   ├── logs/                   # Per-run test logs (git-ignored)
-│   └── README.md               # Test suite documentation
-└── logs/                       # Runtime logs (git-ignored)
-    ├── cp/                     # Per-NF log files
-    └── upf/                    # UPF log file
+├── proto/                    # Protobuf definitions (cnode wire format)
+├── tests/                    # Test suite
+│   ├── cnode_mock_server.py  # Mock cnode server
+│   ├── common.sh, run_all.sh
+│   └── tc01-tc10             # Test cases
+├── build-output/             # Generated by build (git-ignored)
+│   └── open5gs/bin/, lib/
+└── instances/                # Generated at runtime (git-ignored)
+    ├── bts1/                 # Per-instance configs + docker-compose
+    ├── bts2/
+    ├── bts3/
+    └── bts4/
 ```
 
 ---
 
-## Test Suite
+## Prerequisites
 
-A full automated test suite is included in `tests/`. Tests run against the live Docker deployment and cover registration, recovery, multi-UE, multi-APN, paging, NG Reset, and the custom AMF health check.
+- Docker & Docker Compose
+- MongoDB 7.0 running on host (port 27017)
+- Linux host with iptables and dummy kernel module (`modprobe dummy`)
+- SCTP kernel module (`modprobe sctp`)
 
-### Quick Start
+---
+
+## Troubleshooting
+
+### Instance not starting
 
 ```bash
-# Ensure core + UERANSIM are running first
-./open5gs.sh start --ueransim
-./open5gs.sh provision
+# Check if MongoDB is running on host
+mongosh --eval "db.runCommand({ping:1})"
 
-# Run all 10 tests
-cd tests && ./run_all.sh
+# Check Docker logs
+./logs.sh --id 1
 
-# Run specific tests
-./run_all.sh 1 4 9
-
-# Run a single test directly
-bash tests/tc09_amf_health_check.sh
-
-# List all tests
-./run_all.sh --list
+# Check NRF is up
+docker exec bts1-cp wget -qO- http://127.0.0.1:7777/nnrf-nfm/v1/nf-instances
 ```
 
-### Test Cases at a Glance
+### BTS cannot reach AMF
 
-| # | Test | What it verifies |
-|---|------|-----------------|
-| TC01 | Parallel Registration | N UEs register simultaneously |
-| TC02 | Crash Recovery | Core recovers after UPF/CP/MongoDB restart |
-| TC03 | Multi-APN | UE holds sessions on both `internet` + `ims` DNNs |
-| TC04 | Multi-UE Deregistration | N UEs deregister simultaneously |
-| TC05 | Paging / Idle UE | AMF pages idle UE on downlink data |
-| TC06 | UE Context Release | Ungraceful (RLF) + graceful deregister |
-| TC07 | RAN Config Update | TAC change: gNB reconnects with new TAC |
-| TC08 | NG Reset | gNB graceful restart + forced kill recovery |
-| **TC09** | **AMF cnode** | **AMF connects to cnode server, registers, responds SERVING** |
-| TC10 | Memory / Stability | Register/deregister cycles, memory growth < 20% |
+```bash
+# Verify dummy interface IPs
+ip addr show bts0
 
-> **TC09 is unique to this deployment** — it validates the custom AMF fork's cnode outbound registration + health-check client. See [AMF Custom Fork](#amf-custom-fork--cnode-registration--health-check) for details.
+# Check DNAT rules
+iptables -t nat -L PREROUTING -n
 
-Test logs are saved to `tests/logs/` with timestamps. See [`tests/README.md`](tests/README.md) for full documentation.
+# Verify AMF is listening on NGAP
+docker exec bts1-cp ss -lnp | grep 38412
+```
+
+### Cleaning up stale state
+
+```bash
+# Stop and remove all instances
+./stop.sh --all --rm
+
+# Flush iptables if needed
+iptables -t nat -F PREROUTING
+iptables -t nat -F OUTPUT
+iptables -t nat -F POSTROUTING
+iptables -F FORWARD
+
+# Remove dummy interface
+ip link del bts0
+```
 
 ---
 
@@ -726,9 +357,12 @@ Test logs are saved to `tests/logs/` with timestamps. See [`tests/README.md`](te
 |---------|---------------------|---------|
 | Language | C (meson/ninja) | Go |
 | Version | v2.7.5 | v4.x |
-| Containers | 5 (MongoDB, CP, UPF, WebUI, UERANSIM) | 5 |
-| Provisioning | Direct MongoDB (`mongosh`) | WebUI REST API |
+| Deployment | Multi-BTS (N instances) | Single instance |
+| MongoDB | Host (shared across instances) | Docker container |
+| Containers per instance | 3 (CP, UPF, WebUI) | 5 |
+| BTS routing | IP-based (dummy iface + DNAT) | Port forwarding |
+| Provisioning | Direct `mongosh` on host | WebUI REST API |
 | Slice (default) | SST=3, SD=198153 | SST=3, SD=198153 |
-| WebUI | Port 4000, admin/1423 | Port 4000, admin/free5gc |
-| AMF Health Check | ✅ cnode outbound client (custom fork) | ✅ cnode outbound client (custom fork) |
-| Test suite | ✅ 10 TCs (`tests/`) | ✅ 10 TCs (`tests/`) |
+| WebUI | Port 4000+N, admin/1423 | Port 5000, admin/free5gc |
+| AMF Health Check | cnode outbound client (custom fork) | cnode outbound client (custom fork) |
+| NGAP port | 38412 | 38412 |
