@@ -26,15 +26,24 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
+compose_cmd() {
+    local name="$1" inst_dir="$2"; shift 2
+    local env_file="${inst_dir}/.env"
+    if [ -f "$env_file" ]; then
+        docker compose -p "${name}" --env-file "${env_file}" -f "${PROJECT_DIR}/docker-compose.yaml" "$@"
+    else
+        docker compose -p "${name}" -f "${PROJECT_DIR}/docker-compose.yaml" "$@"
+    fi
+}
+
 stop_instance() {
     local id="$1"
     local name="bts${id}"
     local inst_dir="${PROJECT_DIR}/instances/${name}"
-    local compose_file="${inst_dir}/docker-compose.yaml"
     local metadata="${inst_dir}/metadata.env"
 
-    if [ ! -f "$compose_file" ]; then
-        warn "Instance ${name} not found (no compose file)"
+    if [ ! -d "$inst_dir" ]; then
+        warn "Instance ${name} not found"
         return 1
     fi
 
@@ -51,7 +60,7 @@ stop_instance() {
 
     if [ "$REMOVE" = true ]; then
         hdr "Removing instance ${name}..."
-        docker compose -p "${name}" -f "${compose_file}" down -v --remove-orphans 2>/dev/null || true
+        compose_cmd "${name}" "${inst_dir}" down -v --remove-orphans 2>/dev/null || true
 
         # Cleanup UE routes + iptables
         if [ -n "$ue_subnet" ] && [ -n "$upf_ip" ]; then
@@ -73,7 +82,7 @@ stop_instance() {
         ok "Instance ${name} removed (containers + network + shim cleaned)"
     else
         hdr "Stopping instance ${name}..."
-        docker compose -p "${name}" -f "${compose_file}" stop 2>/dev/null || true
+        compose_cmd "${name}" "${inst_dir}" stop 2>/dev/null || true
         ok "Instance ${name} stopped"
     fi
 }

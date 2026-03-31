@@ -213,92 +213,28 @@ create_macvlan_network "$INSTANCE_ID" "$PARENT_IFACE" "$HOST_SUBNET" "$HOST_GW"
 log "Creating macvlan shim for host access..."
 create_macvlan_shim "$INSTANCE_ID" "$PARENT_IFACE" "$AMF_IP" "$UPF_IP"
 
-# ── Generate docker-compose for this instance ─────────────────
-COMPOSE_FILE="${INST_DIR}/docker-compose.yaml"
+# ── Generate .env for docker-compose ─────────────────────────
+ENV_FILE="${INST_DIR}/.env"
 
-cat > "${COMPOSE_FILE}" <<COMPEOF
-# Auto-generated for ${INSTANCE_NAME}
-services:
-
-  cp:
-    container_name: ${INSTANCE_NAME}-cp
-    image: ${IMAGE_CP}
-    volumes:
-      - ${INST_CONFIG}/nrf.yaml:/etc/open5gs/nrf.yaml
-      - ${INST_CONFIG}/scp.yaml:/etc/open5gs/scp.yaml
-      - ${INST_CONFIG}/amf.yaml:/etc/open5gs/amf.yaml
-      - ${INST_CONFIG}/smf.yaml:/etc/open5gs/smf.yaml
-      - ${INST_CONFIG}/ausf.yaml:/etc/open5gs/ausf.yaml
-      - ${INST_CONFIG}/udm.yaml:/etc/open5gs/udm.yaml
-      - ${INST_CONFIG}/udr.yaml:/etc/open5gs/udr.yaml
-      - ${INST_CONFIG}/pcf.yaml:/etc/open5gs/pcf.yaml
-      - ${INST_CONFIG}/nssf.yaml:/etc/open5gs/nssf.yaml
-      - ${INST_CONFIG}/bsf.yaml:/etc/open5gs/bsf.yaml
-      - ${INST_DIR}/logs/cp:/var/log/open5gs
-    environment:
-      DB_URI: mongodb://${MONGO_IP}/${DB_NAME}
-    networks:
-      cn-net:
-        ipv4_address: ${AMF_IP}
-        aliases:
-          - nrf.open5gs.org
-          - scp.open5gs.org
-          - amf.open5gs.org
-          - smf.open5gs.org
-          - ausf.open5gs.org
-          - udm.open5gs.org
-          - udr.open5gs.org
-          - pcf.open5gs.org
-          - nssf.open5gs.org
-          - bsf.open5gs.org
-      internal:
-        ipv4_address: ${PFCP_CP_IP}
-    healthcheck:
-      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/7777 && echo ok"]
-      interval: 1s
-      timeout: 1s
-      start_period: 1s
-      retries: 60
-    extra_hosts:
-      - "mongohost:${MONGO_IP}"
-
-  upf:
-    container_name: ${INSTANCE_NAME}-upf
-    image: ${IMAGE_UPF}
-    volumes:
-      - ${INST_CONFIG}/upf.yaml:/etc/open5gs/upf.yaml
-      - ${INST_DIR}/logs/upf:/var/log/open5gs
-    cap_add:
-      - NET_ADMIN
-      - SYS_MODULE
-    devices:
-      - "/dev/net/tun"
-    networks:
-      cn-net:
-        ipv4_address: ${UPF_IP}
-        aliases:
-          - upf.open5gs.org
-      internal:
-        ipv4_address: ${PFCP_UPF_IP}
-    depends_on:
-      cp:
-        condition: service_started
-
-networks:
-  cn-net:
-    external: true
-    name: ${INSTANCE_NAME}-net
-  internal:
-    driver: bridge
-    internal: true
-    ipam:
-      config:
-        - subnet: ${INTERNAL_SUBNET}
-COMPEOF
+cat > "${ENV_FILE}" <<ENVEOF
+# Auto-generated for ${INSTANCE_NAME} — used by docker-compose.yaml
+INSTANCE_NAME=${INSTANCE_NAME}
+IMAGE_CP=${IMAGE_CP}
+IMAGE_UPF=${IMAGE_UPF}
+INST_CONFIG=${INST_CONFIG}
+INST_DIR=${INST_DIR}
+AMF_IP=${AMF_IP}
+UPF_IP=${UPF_IP}
+PFCP_CP_IP=${PFCP_CP_IP}
+PFCP_UPF_IP=${PFCP_UPF_IP}
+INTERNAL_SUBNET=${INTERNAL_SUBNET}
+MONGO_IP=${MONGO_IP}
+DB_NAME=${DB_NAME}
+ENVEOF
 
 # ── Start the instance ────────────────────────────────────────
 log "Starting containers..."
-docker compose -p "${COMPOSE_PROJECT}" -f "${COMPOSE_FILE}" up -d
+docker compose -p "${COMPOSE_PROJECT}" --env-file "${ENV_FILE}" -f "${PROJECT_DIR}/docker-compose.yaml" up -d
 
 log "Waiting for Control Plane (NRF on ${AMF_IP}:7777)..."
 wait_port "${AMF_IP}" 7777 60
