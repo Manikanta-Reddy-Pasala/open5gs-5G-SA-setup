@@ -32,6 +32,9 @@ services:
     environment:
       DB_URI: mongodb://${MONGO_IP}/${DB_NAME}
       CP_IP: ${AMF_IP}
+      # AMF health server — bind to instance IP to avoid port conflicts
+      AMF_TCP_BIND_ADDR: ${AMF_IP}
+      AMF_TCP_PORT: "50051"
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/${AMF_IP}/7777 && echo ok"]
       interval: 1s
