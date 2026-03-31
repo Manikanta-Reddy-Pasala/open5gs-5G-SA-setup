@@ -23,6 +23,7 @@ INSTANCE_ID=""
 AMF_IP=""
 UPF_IP=""
 IFACE_OVERRIDE=""
+DRIVER_OVERRIDE=""
 MCC="$DEFAULT_MCC"
 MNC="$DEFAULT_MNC"
 TAC="$DEFAULT_TAC"
@@ -41,6 +42,7 @@ while [[ $# -gt 0 ]]; do
         --amf-ip)    AMF_IP="$2"; shift ;;
         --upf-ip)    UPF_IP="$2"; shift ;;
         --iface)     IFACE_OVERRIDE="$2"; shift ;;
+        --driver)    DRIVER_OVERRIDE="$2"; shift ;;
         --mcc)       MCC="$2"; MCC_MNC_SET=true; shift ;;
         --mnc)       MNC="$2"; MCC_MNC_SET=true; shift ;;
         --plmn)      PLMN_LIST+=("$2"); shift ;;
@@ -80,6 +82,7 @@ if [ -z "$INSTANCE_ID" ] || [ -z "$AMF_IP" ] || [ -z "$UPF_IP" ]; then
     err "  --ue-subnet X   UE pool subnet (default: ${DEFAULT_UE_SUBNET})"
     err "  --ue-gw X       UE pool gateway (default: ${DEFAULT_UE_GW})"
     err "  --iface NAME    Force network interface (default: auto-detect from AMF IP)"
+    err "  --driver TYPE   Force network driver: macvlan or ipvlan (default: auto-detect)"
     err "  --debug         Enable debug logging"
     exit 1
 fi
@@ -119,10 +122,18 @@ if [ -z "$PARENT_IFACE" ]; then
 fi
 
 # Detect network driver (macvlan preferred, ipvlan fallback for KVM)
-NET_DRIVER=$(detect_network_driver "$PARENT_IFACE") || {
-    err "Use --iface <name> to specify a different interface"
-    exit 1
-}
+if [ -n "$DRIVER_OVERRIDE" ]; then
+    case "$DRIVER_OVERRIDE" in
+        macvlan|ipvlan) NET_DRIVER="$DRIVER_OVERRIDE" ;;
+        *) err "Invalid --driver '${DRIVER_OVERRIDE}' — must be 'macvlan' or 'ipvlan'"; exit 1 ;;
+    esac
+    log "Using user-specified network driver: ${NET_DRIVER}"
+else
+    NET_DRIVER=$(detect_network_driver "$PARENT_IFACE") || {
+        err "Use --driver macvlan to skip auto-detection if you know macvlan works"
+        exit 1
+    }
+fi
 
 HOST_IP=$(get_host_ip "$PARENT_IFACE")
 HOST_SUBNET=$(get_interface_subnet "$PARENT_IFACE")

@@ -8,6 +8,9 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# ── System binaries (full paths for sudo compatibility) ────
+IP_CMD=$(command -v ip 2>/dev/null || echo "/sbin/ip")
+
 # ── Build constants ─────────────────────────────────────────
 OPEN5GS_VERSION="v2.7.5"
 IMAGE_CP="open5gs-cp:${OPEN5GS_VERSION}"
@@ -159,31 +162,33 @@ detect_network_driver() {
     local mv_err iv_err
 
     # Clean up any stale test link from a previous crashed run
-    ip link del "$test_name" 2>/dev/null
+    $IP_CMD link del "$test_name" 2>/dev/null
 
-    mv_err=$(ip link add "$test_name" link "$iface" type macvlan mode bridge 2>&1)
+    mv_err=$($IP_CMD link add "$test_name" link "$iface" type macvlan mode bridge 2>&1)
     if [ $? -eq 0 ]; then
-        ip link del "$test_name" 2>/dev/null
+        $IP_CMD link del "$test_name" 2>/dev/null
         ok "Interface '${iface}' supports macvlan (${cidr})"
         echo "macvlan"
         return 0
     fi
-    ip link del "$test_name" 2>/dev/null
+    $IP_CMD link del "$test_name" 2>/dev/null
 
     # Fall back to ipvlan (shared MAC — works in KVM without promiscuous mode)
-    iv_err=$(ip link add "$test_name" link "$iface" type ipvlan mode l2 2>&1)
+    iv_err=$($IP_CMD link add "$test_name" link "$iface" type ipvlan mode l2 2>&1)
     if [ $? -eq 0 ]; then
-        ip link del "$test_name" 2>/dev/null
+        $IP_CMD link del "$test_name" 2>/dev/null
         ok "Interface '${iface}' supports ipvlan L2 (${cidr})"
         warn "macvlan not available (KVM?) — using ipvlan L2 fallback (shared MAC)"
         echo "ipvlan"
         return 0
     fi
-    ip link del "$test_name" 2>/dev/null
+    $IP_CMD link del "$test_name" 2>/dev/null
 
     err "Interface '${iface}' supports neither macvlan nor ipvlan"
     err "  macvlan error: ${mv_err}"
     err "  ipvlan error:  ${iv_err}"
+    err "  ip binary: ${IP_CMD} ($(${IP_CMD} -V 2>&1 | head -1))"
+    err "  Tip: use --driver macvlan to skip this test"
     return 1
 }
 
