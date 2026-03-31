@@ -1,4 +1,4 @@
-db_uri: mongodb://MONGO_HOST_PLACEHOLDER/open5gs
+db_uri: mongodb://__MONGO_HOST__/open5gs
 
 logger:
   file:

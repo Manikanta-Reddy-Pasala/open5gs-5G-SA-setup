@@ -3,25 +3,25 @@
 # build.sh — Compile open5GS from source
 # ============================================================
 # Usage:
-#   ./build.sh              # Full source build (~20 min)
-#   ./build.sh --quick      # Skip source build, just verify binaries
+#   ./scripts/build.sh              # Full source build (~20 min)
+#   ./scripts/build.sh --quick      # Skip source build, just verify binaries
 # ============================================================
 
 set -uo pipefail
 source "$(dirname "$0")/env.sh"
-cd "$SCRIPT_DIR"
+cd "$PROJECT_DIR"
 
 quick=false
 [ "${1:-}" = "--quick" ] && quick=true
 
 if [ "$quick" = false ]; then
     hdr ""
-    hdr "  Building open5GS from source (no UERANSIM)"
+    hdr "  Building open5GS from source"
     hdr "  This compiles C code inside Docker (~20 minutes first run)"
     hdr ""
 
     log "Step 1/2: Building open5GS from source..."
-    docker build -f Dockerfile.build-all -t "open5gs-builder:${OPEN5GS_VERSION}" .
+    docker build -f Dockerfile.build -t "open5gs-builder:${OPEN5GS_VERSION}" .
 
     log "Source build complete."
     log "Step 2/2: Extracting built binaries to build-output/..."
@@ -42,7 +42,7 @@ if [ "$quick" = false ]; then
 else
     log "Quick mode: verifying existing build-output/"
     if [ ! -d "build-output/open5gs" ]; then
-        err "build-output/open5gs/ not found. Run './build.sh' first (without --quick)."
+        err "build-output/open5gs/ not found. Run './scripts/build.sh' first (without --quick)."
         exit 1
     fi
     ok "build-output/ exists with binaries"
@@ -51,5 +51,5 @@ fi
 hdr ""
 ok "BUILD COMPLETE"
 hdr ""
-log "Next: ./docker.sh   (to build runtime Docker images)"
+log "Next: ./scripts/docker.sh   (to build runtime Docker images)"
 hdr ""

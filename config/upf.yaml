@@ -6,13 +6,13 @@ logger:
 upf:
   pfcp:
     server:
-      - address: 10.200.100.17
+      - address: __UPF_IP__
   gtpu:
     server:
-      - address: 10.200.100.17
+      - address: __UPF_IP__
   session:
-    - subnet: 10.206.0.0/16
-      gateway: 10.206.0.1
+    - subnet: __UE_SUBNET__
+      gateway: __UE_GW__
       dnn: internet
   metrics:
     server:

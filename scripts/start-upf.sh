@@ -11,8 +11,8 @@ log "Setting up ogstun TUN interface..."
 
 UE_SUBNET=$(awk '/subnet:/{print $3; exit}' /etc/open5gs/upf.yaml)
 UE_GW=$(awk '/gateway:/{print $2; exit}' /etc/open5gs/upf.yaml)
-UE_SUBNET="${UE_SUBNET:-10.206.0.0/16}"
-UE_GW="${UE_GW:-10.206.0.1}"
+UE_SUBNET="${UE_SUBNET:-10.45.0.0/16}"
+UE_GW="${UE_GW:-10.45.0.1}"
 UE_PREFIX="${UE_SUBNET#*/}"
 log "  UE subnet: ${UE_SUBNET}  gateway: ${UE_GW}/${UE_PREFIX}"
 

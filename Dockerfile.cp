@@ -31,11 +31,11 @@ COPY build-output/open5gs/bin/open5gs-bsfd  ./
 COPY build-output/open5gs/lib/ /usr/local/lib/
 RUN ldconfig
 
-COPY consolidated/start-cp-nfs.sh ./start-cp-nfs.sh
-RUN chmod +x ./start-cp-nfs.sh ./open5gs-*
+COPY scripts/start-cp.sh ./start-cp.sh
+RUN chmod +x ./start-cp.sh ./open5gs-*
 
 RUN mkdir -p /var/log/open5gs /etc/open5gs
 
 EXPOSE 7777 7778 7780 7781 7782 7783 7784 7785 7786 7787 38412/sctp
 
-ENTRYPOINT ["./start-cp-nfs.sh"]
+ENTRYPOINT ["./start-cp.sh"]

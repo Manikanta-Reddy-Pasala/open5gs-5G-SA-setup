@@ -3,13 +3,13 @@
 # status.sh — Show status of CN instances
 # ============================================================
 # Usage:
-#   ./status.sh              # Show all instances
-#   ./status.sh --id 1       # Show specific instance
+#   ./scripts/status.sh              # Show all instances
+#   ./scripts/status.sh --id 1       # Show specific instance
 # ============================================================
 
 set -uo pipefail
 source "$(dirname "$0")/env.sh"
-cd "$SCRIPT_DIR"
+cd "$PROJECT_DIR"
 
 INSTANCE_ID=""
 
@@ -24,15 +24,22 @@ done
 show_instance() {
     local id="$1"
     local name="bts${id}"
-    local cp_ip=$(instance_cp_ip "$id")
-    local upf_ip=$(instance_upf_ip "$id")
-    local subnet=$(instance_network "$id")
-    local ue_subnet="10.$((205 + id)).0.0/16"
-    local webui_port=$((4000 + id))
-    local mongo_ip=$(get_host_mongo_ip)
-    local db_name="open5gs"
-    local host_ip=$(hostname -I | awk '{print $1}')
-    local bts_ip=$(instance_bts_ip "$id")
+    local inst_dir="${PROJECT_DIR}/instances/${name}"
+    local metadata="${inst_dir}/metadata.env"
+
+    if [ ! -f "$metadata" ]; then
+        warn "Instance ${name} not found (no metadata.env)"
+        return
+    fi
+
+    source "$metadata"
+    local amf_ip="${AMF_IP:-?}"
+    local upf_ip="${UPF_IP:-?}"
+    local host_ip="${HOST_IP:-?}"
+    local parent_iface="${PARENT_IFACE:-?}"
+    local ue_subnet="${UE_SUBNET:-?}"
+    local mongo_ip="${MONGO_IP:-?}"
+    local db_name="${DB_NAME:-open5gs}"
 
     hdr ""
     hdr "  ═══ Instance: ${name} ═══"
@@ -40,7 +47,7 @@ show_instance() {
 
     echo "${BOLD}Containers:${NC}"
     local all_ok=true
-    for cname in "${name}-cp" "${name}-upf" "${name}-webui"; do
+    for cname in "${name}-cp" "${name}-upf"; do
         local state
         state=$(docker inspect --format='{{.State.Status}}' "$cname" 2>/dev/null || echo "not found")
         local health=""
@@ -54,23 +61,16 @@ show_instance() {
     done
 
     echo ""
-    echo "${BOLD}External BTS Access (IP-based routing):${NC}"
-    log "  NGAP/SCTP: ${bts_ip}:${NGAP_PORT}"
-    log "  GTP-U/UDP: ${bts_ip}:${GTPU_PORT}"
-    log "  WebUI:     http://${host_ip}:${webui_port}"
-
-    echo ""
-    echo "${BOLD}Internal (Docker bridge):${NC}"
-    log "  Subnet:     ${subnet}"
-    log "  AMF (NGAP): ${cp_ip}:${NGAP_PORT}"
-    log "  UPF (GTPU): ${upf_ip}:${GTPU_PORT}"
-    log "  UE Pool:    ${ue_subnet}"
+    echo "${BOLD}Network (macvlan on ${parent_iface}):${NC}"
+    log "  AMF/NGAP:  ${amf_ip}:${NGAP_PORT}"
+    log "  UPF/GTPU:  ${upf_ip}:${GTPU_PORT}"
+    log "  UE Pool:   ${ue_subnet}"
 
     echo ""
     echo "${BOLD}NRF Registrations:${NC}"
     local nrf_output
     nrf_output=$(curl -s --max-time 3 --http2-prior-knowledge \
-        "http://${cp_ip}:7777/nnrf-nfm/v1/nf-instances" 2>/dev/null || echo "")
+        "http://${amf_ip}:7777/nnrf-nfm/v1/nf-instances" 2>/dev/null || echo "")
     if [ -n "$nrf_output" ]; then
         local nf_count
         nf_count=$(echo "$nrf_output" | python3 -c "
@@ -82,15 +82,15 @@ try:
 except:
     print('?')
 " 2>/dev/null || echo "?")
-        ok "NRF reachable - ${nf_count} NFs registered"
+        ok "NRF reachable — ${nf_count} NFs registered"
     else
-        warn "NRF not reachable"
+        warn "NRF not reachable at ${amf_ip}:7777"
     fi
 
     echo ""
     echo "${BOLD}Subscribers:${NC}"
     local sub_count
-    sub_count=$(mongosh "mongodb://localhost:27017/open5gs" --quiet \
+    sub_count=$(mongosh "mongodb://localhost:27017/${db_name}" --quiet \
         --eval "db.subscribers.countDocuments()" 2>/dev/null | tail -1 || echo "0")
     log "  Total: ${sub_count}"
 
@@ -123,14 +123,14 @@ if [ -n "$INSTANCE_ID" ]; then
     show_instance "$INSTANCE_ID"
 else
     # Show all instances
-    if [ -d "${SCRIPT_DIR}/instances" ]; then
-        for inst_dir in "${SCRIPT_DIR}/instances"/bts*; do
+    if [ -d "${PROJECT_DIR}/instances" ]; then
+        for inst_dir in "${PROJECT_DIR}/instances"/bts*; do
             [ -d "$inst_dir" ] || continue
             id="${inst_dir##*bts}"
             show_instance "$id"
         done
     else
-        log "No instances running. Start one: ./start.sh --id 1"
+        log "No instances running. Start one: ./scripts/start.sh --id 1 --amf-ip <IP> --upf-ip <IP>"
     fi
 fi
 

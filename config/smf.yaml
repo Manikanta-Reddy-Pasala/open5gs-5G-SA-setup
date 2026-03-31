@@ -13,10 +13,10 @@ smf:
         - uri: http://127.0.0.1:7778
   pfcp:
     server:
-      - address: 10.200.100.16
+      - address: __CP_IP__
     client:
       upf:
-        - address: 10.200.100.17
+        - address: __UPF_IP__
   gtpc:
     server:
       - address: 0.0.0.0
@@ -28,8 +28,8 @@ smf:
       - address: 0.0.0.0
         port: 9091
   session:
-    - subnet: 10.206.0.0/16
-      gateway: 10.206.0.1
+    - subnet: __UE_SUBNET__
+      gateway: __UE_GW__
   dns:
     - 8.8.8.8
     - 8.8.4.4

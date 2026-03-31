@@ -21,7 +21,7 @@ COPY build-output/open5gs/bin/open5gs-upfd ./
 COPY build-output/open5gs/lib/ /usr/local/lib/
 RUN ldconfig
 
-COPY consolidated/start-upf.sh ./start-upf.sh
+COPY scripts/start-upf.sh ./start-upf.sh
 RUN chmod +x ./start-upf.sh ./open5gs-upfd
 
 RUN mkdir -p /var/log/open5gs /etc/open5gs

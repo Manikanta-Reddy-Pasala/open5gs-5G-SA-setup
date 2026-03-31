@@ -3,14 +3,14 @@
 # provision.sh — Provision subscribers (shared database)
 # ============================================================
 # Usage:
-#   ./provision.sh                            # Provision default subscriber
-#   ./provision.sh --count 10                 # Bulk provision 10 subscribers
-#   ./provision.sh --imsi 001010000050641 --k <key> --opc <opc>
+#   ./scripts/provision.sh                            # Provision default subscriber
+#   ./scripts/provision.sh --count 10                 # Bulk provision 10 subscribers
+#   ./scripts/provision.sh --imsi 001010000050641 --k <key> --opc <opc>
 # ============================================================
 
 set -uo pipefail
 source "$(dirname "$0")/env.sh"
-cd "$SCRIPT_DIR"
+cd "$PROJECT_DIR"
 
 COUNT=1
 IMSI="$DEFAULT_IMSI"
