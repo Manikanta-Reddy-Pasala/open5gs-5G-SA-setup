@@ -156,23 +156,34 @@ detect_network_driver() {
 
     # Try macvlan first (preferred — each container gets own MAC)
     local test_name="driver-test-$$"
-    if ip link add "$test_name" link "$iface" type macvlan mode bridge 2>/dev/null; then
+    local mv_err iv_err
+
+    # Clean up any stale test link from a previous crashed run
+    ip link del "$test_name" 2>/dev/null
+
+    mv_err=$(ip link add "$test_name" link "$iface" type macvlan mode bridge 2>&1)
+    if [ $? -eq 0 ]; then
         ip link del "$test_name" 2>/dev/null
         ok "Interface '${iface}' supports macvlan (${cidr})"
         echo "macvlan"
         return 0
     fi
+    ip link del "$test_name" 2>/dev/null
 
     # Fall back to ipvlan (shared MAC — works in KVM without promiscuous mode)
-    if ip link add "$test_name" link "$iface" type ipvlan mode l2 2>/dev/null; then
+    iv_err=$(ip link add "$test_name" link "$iface" type ipvlan mode l2 2>&1)
+    if [ $? -eq 0 ]; then
         ip link del "$test_name" 2>/dev/null
         ok "Interface '${iface}' supports ipvlan L2 (${cidr})"
         warn "macvlan not available (KVM?) — using ipvlan L2 fallback (shared MAC)"
         echo "ipvlan"
         return 0
     fi
+    ip link del "$test_name" 2>/dev/null
 
     err "Interface '${iface}' supports neither macvlan nor ipvlan"
+    err "  macvlan error: ${mv_err}"
+    err "  ipvlan error:  ${iv_err}"
     return 1
 }
 
