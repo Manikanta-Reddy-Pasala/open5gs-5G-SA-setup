@@ -13,10 +13,10 @@ smf:
         - uri: http://127.0.0.1:7778
   pfcp:
     server:
-      - address: __CP_IP__
+      - address: __PFCP_CP_IP__
     client:
       upf:
-        - address: __UPF_IP__
+        - address: __PFCP_UPF_IP__
   gtpc:
     server:
       - address: 0.0.0.0

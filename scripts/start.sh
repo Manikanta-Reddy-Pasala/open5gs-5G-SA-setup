@@ -109,6 +109,11 @@ COMPOSE_PROJECT="bts${INSTANCE_ID}"
 LOG_LEVEL="info"
 [ "$DEBUG_MODE" = true ] && LOG_LEVEL="debug"
 
+# Internal private network for PFCP (SMF ↔ UPF) — not exposed externally
+INTERNAL_SUBNET="10.33.${INSTANCE_ID}.0/24"
+PFCP_CP_IP="10.33.${INSTANCE_ID}.2"
+PFCP_UPF_IP="10.33.${INSTANCE_ID}.3"
+
 PLMN_DISPLAY=$(IFS=', '; echo "${PLMN_LIST[*]}")
 
 hdr ""
@@ -134,6 +139,8 @@ for f in nrf.yaml scp.yaml amf.yaml smf.yaml upf.yaml ausf.yaml udm.yaml udr.yam
     sed -e "s|__MONGO_HOST__|${MONGO_IP}|g" \
         -e "s|__CP_IP__|${AMF_IP}|g" \
         -e "s|__UPF_IP__|${UPF_IP}|g" \
+        -e "s|__PFCP_CP_IP__|${PFCP_CP_IP}|g" \
+        -e "s|__PFCP_UPF_IP__|${PFCP_UPF_IP}|g" \
         -e "s|__UE_SUBNET__|${UE_SUBNET}|g" \
         -e "s|__UE_GW__|${UE_GW}|g" \
         "${PROJECT_DIR}/config/${f}" > "${INST_CONFIG}/${f}"
@@ -244,6 +251,8 @@ services:
           - pcf.open5gs.org
           - nssf.open5gs.org
           - bsf.open5gs.org
+      internal:
+        ipv4_address: ${PFCP_CP_IP}
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/7777 && echo ok"]
       interval: 1s
@@ -269,6 +278,8 @@ services:
         ipv4_address: ${UPF_IP}
         aliases:
           - upf.open5gs.org
+      internal:
+        ipv4_address: ${PFCP_UPF_IP}
     depends_on:
       cp:
         condition: service_started
@@ -277,6 +288,12 @@ networks:
   cn-net:
     external: true
     name: ${INSTANCE_NAME}-net
+  internal:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: ${INTERNAL_SUBNET}
 COMPEOF
 
 # ── Start the instance ────────────────────────────────────────

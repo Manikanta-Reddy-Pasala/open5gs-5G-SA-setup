@@ -6,7 +6,7 @@ logger:
 upf:
   pfcp:
     server:
-      - address: __UPF_IP__
+      - address: __PFCP_UPF_IP__
   gtpu:
     server:
       - address: __UPF_IP__
