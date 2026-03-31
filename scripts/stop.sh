@@ -48,7 +48,7 @@ stop_instance() {
     fi
 
     # Load saved metadata for IP addresses
-    local amf_ip="" upf_ip="" ue_subnet="" parent_iface="" host_prefix=""
+    local amf_ip="" upf_ip="" ue_subnet="" parent_iface="" host_prefix="" tun_dev=""
     if [ -f "$metadata" ]; then
         source "$metadata"
         amf_ip="${AMF_IP:-}"
@@ -56,6 +56,7 @@ stop_instance() {
         ue_subnet="${UE_SUBNET:-}"
         parent_iface="${PARENT_IFACE:-}"
         host_prefix="${HOST_PREFIX:-}"
+        tun_dev="${TUN_DEV:-}"
     else
         warn "No metadata.env for ${name} — cannot clean up networking"
     fi
@@ -63,6 +64,13 @@ stop_instance() {
     if [ "$REMOVE" = true ]; then
         hdr "Removing instance ${name}..."
         compose_cmd "${name}" "${inst_dir}" down -v --remove-orphans 2>/dev/null || true
+
+        # Cleanup TUN device
+        if [ -n "$tun_dev" ]; then
+            ip link set "$tun_dev" down 2>/dev/null || true
+            ip tuntap del name "$tun_dev" mode tun 2>/dev/null || true
+            log "Removed TUN device ${tun_dev}"
+        fi
 
         # Cleanup UE routes + iptables
         if [ -n "$ue_subnet" ] && [ -n "$upf_ip" ]; then

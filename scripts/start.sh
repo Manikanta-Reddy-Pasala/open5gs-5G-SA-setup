@@ -141,6 +141,9 @@ LOG_LEVEL="info"
 PFCP_CP_IP="$AMF_IP"
 PFCP_UPF_IP="$UPF_IP"
 
+# Unique TUN device per instance (ogstun1, ogstun2, ...)
+TUN_DEV="ogstun${INSTANCE_ID}"
+
 PLMN_DISPLAY=$(IFS=', '; echo "${PLMN_LIST[*]}")
 
 hdr ""
@@ -153,7 +156,7 @@ log "  Host IP:    ${HOST_IP}"
 log "  MongoDB:    ${MONGO_IP}:27017 (db: ${DB_NAME})"
 log "  PLMN:       ${PLMN_DISPLAY}  TAC=${TAC}"
 log "  Slice:      SST=${SST} SD=${SD}"
-log "  UE Pool:    ${UE_SUBNET}"
+log "  UE Pool:    ${UE_SUBNET} (dev: ${TUN_DEV})"
 hdr ""
 
 # ── Generate instance config ─────────────────────────────────
@@ -170,8 +173,14 @@ for f in nrf.yaml scp.yaml amf.yaml smf.yaml upf.yaml ausf.yaml udm.yaml udr.yam
         -e "s|__PFCP_UPF_IP__|${PFCP_UPF_IP}|g" \
         -e "s|__UE_SUBNET__|${UE_SUBNET}|g" \
         -e "s|__UE_GW__|${UE_GW}|g" \
+        -e "s|__TUN_DEV__|${TUN_DEV}|g" \
         "${PROJECT_DIR}/config/${f}" > "${INST_CONFIG}/${f}"
 done
+
+# Copy entrypoint scripts for containers
+cp "${PROJECT_DIR}/config/start-cp.sh" "${INST_CONFIG}/start-cp.sh"
+cp "${PROJECT_DIR}/config/start-upf.sh" "${INST_CONFIG}/start-upf.sh"
+chmod +x "${INST_CONFIG}/start-cp.sh" "${INST_CONFIG}/start-upf.sh"
 
 # Patch log level
 if [ "$DEBUG_MODE" = true ]; then
@@ -261,6 +270,7 @@ AMF_IP=${AMF_IP}
 UPF_IP=${UPF_IP}
 MONGO_IP=${MONGO_IP}
 DB_NAME=${DB_NAME}
+TUN_DEV=${TUN_DEV}
 ENVEOF
 
 # ── Start the instance ────────────────────────────────────────
@@ -299,6 +309,7 @@ SST=${SST}
 SD=${SD}
 DNN=${DNN}
 DB_NAME=${DB_NAME}
+TUN_DEV=${TUN_DEV}
 METAEOF
 
 hdr ""

@@ -15,7 +15,9 @@ services:
     container_name: ${INSTANCE_NAME}-cp
     image: ${IMAGE_CP}
     network_mode: host
+    entrypoint: ["/bin/bash", "/opt/start-cp.sh"]
     volumes:
+      - ${INST_CONFIG}/start-cp.sh:/opt/start-cp.sh:ro
       - ${INST_CONFIG}/nrf.yaml:/etc/open5gs/nrf.yaml
       - ${INST_CONFIG}/scp.yaml:/etc/open5gs/scp.yaml
       - ${INST_CONFIG}/amf.yaml:/etc/open5gs/amf.yaml
@@ -29,6 +31,7 @@ services:
       - ${INST_DIR}/logs/cp:/var/log/open5gs
     environment:
       DB_URI: mongodb://${MONGO_IP}/${DB_NAME}
+      CP_IP: ${AMF_IP}
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/${AMF_IP}/7777 && echo ok"]
       interval: 1s
@@ -41,9 +44,13 @@ services:
     container_name: ${INSTANCE_NAME}-upf
     image: ${IMAGE_UPF}
     network_mode: host
+    entrypoint: ["/bin/bash", "/opt/start-upf.sh"]
     volumes:
+      - ${INST_CONFIG}/start-upf.sh:/opt/start-upf.sh:ro
       - ${INST_CONFIG}/upf.yaml:/etc/open5gs/upf.yaml
       - ${INST_DIR}/logs/upf:/var/log/open5gs
+    environment:
+      TUN_DEV: ${TUN_DEV}
     cap_add:
       - NET_ADMIN
       - SYS_MODULE
