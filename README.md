@@ -7,40 +7,100 @@ A multi-instance 5G Standalone (SA) core network built from source using [open5G
 ## Architecture
 
 ```
-  Host
+  Host (e.g., 192.168.1.100)
   ┌──────────────────────────────────────────────────────────────┐
   │                                                              │
   │  MongoDB 7.0 (host)  ◄── all instances share one DB         │
-  │  <HOST_IP>:27017                                             │
+  │  192.168.1.100:27017                                        │
   │                                                              │
-  │  Physical NIC: eth0 (e.g., 192.168.1.0/24)                  │
+  │  Physical NIC: eth0 (192.168.1.0/24)                        │
   │                                                              │
-  │    ┌── macvlan: bts1-net ────────┐                           │
-  │    │ bts1-cp   192.168.1.153     │  (AMF + 9 CP NFs)        │
-  │    │ bts1-upf  192.168.1.154     │  (User Plane)            │
-  │    └─────────────────────────────┘                           │
-  │    ┌── macvlan: bts2-net ────────┐                           │
-  │    │ bts2-cp   192.168.1.155     │                           │
-  │    │ bts2-upf  192.168.1.156     │                           │
-  │    └─────────────────────────────┘                           │
+  │    ┌── macvlan: bts1-net ──────────────────────┐             │
+  │    │  bts1-cp   192.168.1.153  (NGAP, SBI)     │             │
+  │    │  bts1-upf  192.168.1.154  (GTP-U)         │             │
+  │    └───────────────────────────────────────────┘             │
+  │    ┌── bridge: bts1_internal (10.33.1.0/24) ───┐             │
+  │    │  bts1-cp   10.33.1.2  ◄──PFCP──► 10.33.1.3│             │
+  │    │  bts1-upf  10.33.1.3              (isolated)│            │
+  │    └───────────────────────────────────────────┘             │
   │                                                              │
-  │  Host shim interfaces (for host <-> container access):       │
-  │    mac-bts1 → routes to .153, .154                           │
-  │    mac-bts2 → routes to .155, .156                           │
+  │    ┌── macvlan: bts2-net ──────────────────────┐             │
+  │    │  bts2-cp   192.168.1.155                   │             │
+  │    │  bts2-upf  192.168.1.156                   │             │
+  │    └───────────────────────────────────────────┘             │
+  │    ┌── bridge: bts2_internal (10.33.2.0/24) ───┐             │
+  │    │  bts2-cp   10.33.2.2  ◄──PFCP──► 10.33.2.3│             │
+  │    └───────────────────────────────────────────┘             │
+  │                                                              │
+  │  Host shim: mac-bts1 → .153, .154                           │
+  │  Host shim: mac-bts2 → .155, .156                           │
   └──────────────────────────────────────────────────────────────┘
 
-  gNB connects directly to real IPs (same standard ports):
-    BTS1 gNB  ──►  192.168.1.153:38412 (NGAP/SCTP)  +  192.168.1.154:2152 (GTP-U)
-    BTS2 gNB  ──►  192.168.1.155:38412               +  192.168.1.156:2152
+  gNB connects directly to real IPs:
+    BTS1 gNB ──► 192.168.1.153:38412 (NGAP)  +  192.168.1.154:2152 (GTP-U)
+    BTS2 gNB ──► 192.168.1.155:38412          +  192.168.1.156:2152
 ```
 
-### How macvlan networking works
+### Dual-network design
 
-1. A Docker **macvlan network** is created on the host's physical interface (e.g., `eth0`)
-2. Each container gets a **real IP** on the host's LAN — directly reachable by gNBs
-3. A **macvlan shim interface** (`mac-btsN`) is created on the host so the host can also communicate with its own containers (Linux blocks this by default for macvlan)
-4. Containers reach host MongoDB via the host's physical IP
-5. No iptables DNAT, no dummy interfaces, no port mapping
+Each instance has **two Docker networks**:
+
+| Network | Type | Purpose | Exposed? |
+|---|---|---|---|
+| `btsN-net` | macvlan on host NIC | NGAP (gNB↔AMF), GTP-U (gNB↔UPF), SBI, MongoDB | Yes — real IPs on host LAN |
+| `btsN_internal` | bridge `10.33.N.0/24` | PFCP (SMF↔UPF control plane) | No — isolated, not routable |
+
+### How IPs flow from CLI to NF configs
+
+When you run:
+```bash
+./scripts/start.sh --id 1 --amf-ip 192.168.1.153 --upf-ip 192.168.1.154
+```
+
+Here's what happens step by step:
+
+**1. Network detection** — `start.sh` auto-detects the host interface from the AMF IP:
+```
+192.168.1.153 → ip route get → finds eth0 (192.168.1.0/24)
+                              → host IP: 192.168.1.100 (for MongoDB)
+                              → gateway: 192.168.1.1
+```
+
+**2. Internal PFCP IPs are derived** from the instance ID:
+```
+Instance --id 1 → PFCP CP: 10.33.1.2, PFCP UPF: 10.33.1.3
+Instance --id 2 → PFCP CP: 10.33.2.2, PFCP UPF: 10.33.2.3
+```
+
+**3. Config templates are patched** — placeholders in `config/*.yaml` get replaced:
+```
+__CP_IP__        → 192.168.1.153   (AMF NGAP bind, SBI bind)
+__UPF_IP__       → 192.168.1.154   (UPF GTP-U bind)
+__PFCP_CP_IP__   → 10.33.1.2       (SMF PFCP server — internal only)
+__PFCP_UPF_IP__  → 10.33.1.3       (UPF PFCP server — internal only)
+__MONGO_HOST__   → 192.168.1.100   (host IP for MongoDB)
+__UE_SUBNET__    → 10.45.0.0/16    (UE pool)
+__UE_GW__        → 10.45.0.1       (UE gateway on ogstun)
+```
+
+**4. `.env` file is generated** at `instances/bts1/.env` with all resolved values.
+
+**5. `docker-compose.yaml`** (static file in repo root) reads the `.env` and starts containers with both networks:
+```
+bts1-cp:   macvlan 192.168.1.153  +  internal 10.33.1.2
+bts1-upf:  macvlan 192.168.1.154  +  internal 10.33.1.3
+```
+
+**6. Result** — each NF binds to the right IP for the right purpose:
+
+| NF | Binds to | Network | What connects to it |
+|---|---|---|---|
+| AMF (NGAP) | `192.168.1.153:38412` | macvlan | gNB over SCTP |
+| AMF (SBI) | `192.168.1.153:7780` | macvlan | Other NFs via NRF |
+| UPF (GTP-U) | `192.168.1.154:2152` | macvlan | gNB user plane |
+| SMF (PFCP) | `10.33.1.2:8805` | internal bridge | UPF only |
+| UPF (PFCP) | `10.33.1.3:8805` | internal bridge | SMF only |
+| NRF (SBI) | `192.168.1.153:7777` | macvlan | All NFs register here |
 
 ---
 
@@ -96,8 +156,9 @@ Required:
   --upf-ip IP     UPF IP address (must be on host's network)
 
 Optional:
-  --mcc X         MCC (default: 001)
-  --mnc Y         MNC (default: 01)
+  --mcc X         MCC (default: 001)  — single PLMN
+  --mnc Y         MNC (default: 01)   — single PLMN
+  --plmn MCC:MNC  PLMN (repeatable for multi-PLMN, overrides --mcc/--mnc)
   --tac Z         TAC (default: 1)
   --sst S         SST (default: 3)
   --sd SD         SD (default: 198153)
@@ -107,7 +168,13 @@ Optional:
   --debug         Enable debug logging
 ```
 
-The script **auto-detects** the host network interface from the AMF IP, derives the subnet and gateway, creates the macvlan network, and configures everything.
+**Multi-PLMN example:**
+```bash
+./scripts/start.sh --id 1 --amf-ip 192.168.1.153 --upf-ip 192.168.1.154 \
+    --plmn 404:30 --plmn 404:20 --tac 7
+```
+
+The script **auto-detects** the host network interface from the AMF IP, derives the subnet and gateway, creates the macvlan network, generates an `.env` file, and starts the instance using the static `docker-compose.yaml`.
 
 ---
 
@@ -189,6 +256,7 @@ build-output/
 
 ```
 open5gs-5G-SA-setup/
+├── docker-compose.yaml       # Static compose file (uses ${VAR} from .env)
 ├── Dockerfile.build          # Multi-stage source builder (applies AMF cnode patch)
 ├── Dockerfile.cp             # CP runtime image
 ├── Dockerfile.upf            # UPF runtime image
@@ -196,7 +264,7 @@ open5gs-5G-SA-setup/
 │   ├── env.sh                # Shared env vars, macvlan helpers
 │   ├── build.sh              # Source compilation script
 │   ├── docker.sh             # Docker image builder
-│   ├── start.sh              # Start CN instance (macvlan + args-based IPs)
+│   ├── start.sh              # Start CN instance (generates .env, creates networks)
 │   ├── stop.sh               # Stop/remove CN instance
 │   ├── status.sh             # Instance status
 │   ├── provision.sh          # Subscriber provisioning
@@ -215,7 +283,11 @@ open5gs-5G-SA-setup/
 ├── tests/                    # Test suite
 ├── build-output/             # Generated by build (git-ignored)
 └── instances/                # Generated at runtime (git-ignored)
-    └── btsN/                 # Per-instance configs + docker-compose + metadata
+    └── btsN/
+        ├── .env              # Per-instance env vars for docker-compose
+        ├── config/           # Patched NF configs
+        ├── logs/             # CP and UPF logs
+        └── metadata.env      # Instance metadata (IPs, PLMN, etc.)
 ```
 
 ---
@@ -234,7 +306,7 @@ AMF  ──HealthCheckResponse ────────►  { status: SERVING }
 
 ### Configuration
 
-Set env vars in the generated `docker-compose.yaml` (or override in `scripts/start.sh`):
+Set env vars in `docker-compose.yaml` (under `cp.environment`) or in the instance `.env` file:
 
 | Env var | Default | Description |
 |---|---|---|
@@ -311,20 +383,3 @@ ip link del mac-bts1 2>/dev/null
 docker network rm bts1-net 2>/dev/null
 ```
 
----
-
-## Comparison: open5GS vs free5GC
-
-| Feature | open5GS (this repo) | free5GC |
-|---------|---------------------|---------|
-| Language | C (meson/ninja) | Go |
-| Version | v2.7.5 | v4.x |
-| Deployment | Multi-BTS (N instances) | Single instance |
-| MongoDB | Host (shared across instances) | Docker container |
-| Containers per instance | 2 (CP, UPF) | 5 |
-| Networking | Macvlan (real IPs on host LAN) | Bridge + port forward |
-| BTS IPs | Passed as args (`--amf-ip`, `--upf-ip`) | Hardcoded |
-| Provisioning | Direct `mongosh` on host | WebUI REST API |
-| Slice (default) | SST=3, SD=198153 | SST=3, SD=198153 |
-| AMF Health Check | cnode outbound client (custom fork) | cnode outbound client (custom fork) |
-| NGAP port | 38412 | 38412 |
