@@ -111,8 +111,10 @@ detect_physical_interface() {
     [ -n "$best" ] && echo "$best"
 }
 
-# Validate that an interface is suitable for macvlan
-validate_macvlan_interface() {
+# Detect the best network driver for an interface
+# Prints "macvlan" or "ipvlan" to stdout, returns 0 on success
+# macvlan is preferred (own MAC per container), ipvlan is fallback (shared MAC, works in KVM)
+detect_network_driver() {
     local iface="$1"
 
     # Must exist
@@ -137,10 +139,10 @@ validate_macvlan_interface() {
         return 1
     fi
 
-    # Warn if /32 (macvlan needs a real subnet)
+    # Warn if /32
     local prefix="${cidr#*/}"
     if [ "$prefix" = "32" ]; then
-        warn "Interface '${iface}' has a /32 address (${cidr}) — macvlan needs a real subnet"
+        warn "Interface '${iface}' has a /32 address (${cidr}) — needs a real subnet"
         warn "Consider using a bridge interface instead"
         return 1
     fi
@@ -148,20 +150,30 @@ validate_macvlan_interface() {
     # Warn about known virtual interfaces
     case "$iface" in
         virbr*|docker*|br-*)
-            warn "Interface '${iface}' looks like a virtual bridge — macvlan may not work as expected"
+            warn "Interface '${iface}' looks like a virtual bridge"
             ;;
     esac
 
-    # Test macvlan capability
-    local test_name="macvlan-test-$$"
+    # Try macvlan first (preferred — each container gets own MAC)
+    local test_name="driver-test-$$"
     if ip link add "$test_name" link "$iface" type macvlan mode bridge 2>/dev/null; then
         ip link del "$test_name" 2>/dev/null
         ok "Interface '${iface}' supports macvlan (${cidr})"
+        echo "macvlan"
         return 0
-    else
-        err "Interface '${iface}' does not support macvlan — check promiscuous mode on hypervisor"
-        return 1
     fi
+
+    # Fall back to ipvlan (shared MAC — works in KVM without promiscuous mode)
+    if ip link add "$test_name" link "$iface" type ipvlan mode l2 2>/dev/null; then
+        ip link del "$test_name" 2>/dev/null
+        ok "Interface '${iface}' supports ipvlan L2 (${cidr})"
+        warn "macvlan not available (KVM?) — using ipvlan L2 fallback (shared MAC)"
+        echo "ipvlan"
+        return 0
+    fi
+
+    err "Interface '${iface}' supports neither macvlan nor ipvlan"
+    return 1
 }
 
 # Get subnet CIDR of an interface (e.g., "192.168.1.0/24")
@@ -185,39 +197,53 @@ get_host_ip() {
     ip -4 addr show "$iface" | awk '/inet / {split($2,a,"/"); print a[1]; exit}'
 }
 
-# Create macvlan Docker network — shared per parent interface
-# Multiple instances on the same LAN share one macvlan network
-create_macvlan_network() {
-    local parent="$2" subnet="$3" gateway="$4"
+# Create Docker network (macvlan or ipvlan) — shared per parent interface
+# Multiple instances on the same LAN share one network
+create_cn_network() {
+    local parent="$2" subnet="$3" gateway="$4" driver="${5:-macvlan}"
     local net_name="open5gs-${parent}"
     if docker network inspect "$net_name" >/dev/null 2>&1; then
         log "Network ${net_name} already exists (shared)"
         echo "$net_name"
         return 0
     fi
-    docker network create -d macvlan \
-        --subnet="$subnet" \
-        --gateway="$gateway" \
-        -o parent="$parent" \
-        "$net_name"
+    if [ "$driver" = "ipvlan" ]; then
+        docker network create -d ipvlan \
+            --subnet="$subnet" \
+            --gateway="$gateway" \
+            -o parent="$parent" \
+            -o ipvlan_mode=l2 \
+            "$net_name"
+    else
+        docker network create -d macvlan \
+            --subnet="$subnet" \
+            --gateway="$gateway" \
+            -o parent="$parent" \
+            "$net_name"
+    fi
     echo "$net_name"
 }
 
-# Get macvlan network name for a parent interface
-get_macvlan_net_name() {
+# Get network name for a parent interface
+get_cn_net_name() {
     local parent="$1"
     echo "open5gs-${parent}"
 }
 
-# Create host-side macvlan shim for host<->container communication
-create_macvlan_shim() {
-    local id="$1" parent="$2" amf_ip="$3" upf_ip="$4"
+# Create host-side shim for host<->container communication
+# Works with both macvlan (bridge mode) and ipvlan (L2 mode)
+create_network_shim() {
+    local id="$1" parent="$2" amf_ip="$3" upf_ip="$4" driver="${5:-macvlan}"
     local shim="mac-bts${id}"
     if ip link show "$shim" >/dev/null 2>&1; then
         log "Shim ${shim} already exists"
         return 0
     fi
-    ip link add "$shim" link "$parent" type macvlan mode bridge
+    if [ "$driver" = "ipvlan" ]; then
+        ip link add "$shim" link "$parent" type ipvlan mode l2
+    else
+        ip link add "$shim" link "$parent" type macvlan mode bridge
+    fi
     ip link set "$shim" up
     ip route add "${amf_ip}/32" dev "$shim" 2>/dev/null || true
     ip route add "${upf_ip}/32" dev "$shim" 2>/dev/null || true

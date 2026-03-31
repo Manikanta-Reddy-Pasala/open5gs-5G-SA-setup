@@ -118,9 +118,10 @@ if [ -z "$PARENT_IFACE" ]; then
     exit 1
 fi
 
-# Validate the interface supports macvlan
-if ! validate_macvlan_interface "$PARENT_IFACE"; then
-    err "Interface '${PARENT_IFACE}' failed macvlan validation"
+# Detect network driver (macvlan preferred, ipvlan fallback for KVM)
+NET_DRIVER=$(detect_network_driver "$PARENT_IFACE")
+if [ -z "$NET_DRIVER" ]; then
+    err "Interface '${PARENT_IFACE}' supports neither macvlan nor ipvlan"
     err "Use --iface <name> to specify a different interface"
     exit 1
 fi
@@ -157,7 +158,7 @@ hdr "  Starting CN Instance: ${INSTANCE_NAME}"
 hdr "  ─────────────────────────────────"
 log "  AMF IP:     ${AMF_IP}  (NGAP:${NGAP_PORT})"
 log "  UPF IP:     ${UPF_IP}  (GTP-U:${GTPU_PORT})"
-log "  Interface:  ${PARENT_IFACE}  (subnet: ${HOST_SUBNET})"
+log "  Interface:  ${PARENT_IFACE}  (subnet: ${HOST_SUBNET}, driver: ${NET_DRIVER})"
 log "  Host IP:    ${HOST_IP}"
 log "  MongoDB:    ${MONGO_IP}:27017 (db: ${DB_NAME})"
 log "  PLMN:       ${PLMN_DISPLAY}  TAC=${TAC}"
@@ -241,13 +242,13 @@ sed -i "s/sd: [0-9a-fA-F]*/sd: ${SD}/g" "${INST_CONFIG}/smf.yaml"
 sed -i "s/sst: [0-9]*/sst: ${SST}/g" "${INST_CONFIG}/nssf.yaml"
 sed -i "s/sd: [0-9a-fA-F]*/sd: ${SD}/g" "${INST_CONFIG}/nssf.yaml"
 
-# ── Create macvlan network ────────────────────────────────────
-log "Creating macvlan network on ${PARENT_IFACE}..."
-MACVLAN_NET=$(create_macvlan_network "$INSTANCE_ID" "$PARENT_IFACE" "$HOST_SUBNET" "$HOST_GW")
+# ── Create container network ──────────────────────────────────
+log "Creating ${NET_DRIVER} network on ${PARENT_IFACE}..."
+MACVLAN_NET=$(create_cn_network "$INSTANCE_ID" "$PARENT_IFACE" "$HOST_SUBNET" "$HOST_GW" "$NET_DRIVER")
 
-# Host-side macvlan shim for host<->container communication
-log "Creating macvlan shim for host access..."
-create_macvlan_shim "$INSTANCE_ID" "$PARENT_IFACE" "$AMF_IP" "$UPF_IP"
+# Host-side shim for host<->container communication
+log "Creating ${NET_DRIVER} shim for host access..."
+create_network_shim "$INSTANCE_ID" "$PARENT_IFACE" "$AMF_IP" "$UPF_IP" "$NET_DRIVER"
 
 # ── Generate .env for docker-compose ─────────────────────────
 ENV_FILE="${INST_DIR}/.env"
@@ -292,6 +293,7 @@ INSTANCE_ID=${INSTANCE_ID}
 AMF_IP=${AMF_IP}
 UPF_IP=${UPF_IP}
 PARENT_IFACE=${PARENT_IFACE}
+NET_DRIVER=${NET_DRIVER}
 HOST_IP=${HOST_IP}
 HOST_SUBNET=${HOST_SUBNET}
 HOST_GW=${HOST_GW}
