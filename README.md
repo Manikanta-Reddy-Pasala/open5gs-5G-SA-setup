@@ -104,6 +104,88 @@ bts1-upf:  macvlan 192.168.1.154  +  internal 10.33.1.3
 
 ---
 
+## Networking Concepts — VLAN, macvlan & bridge
+
+### Why not regular Docker bridge + port mapping?
+
+Telecom NFs use protocols that don't work well with NAT/port-mapping:
+
+| Protocol | Problem with NAT |
+|---|---|
+| **SCTP** (NGAP, AMF↔gNB) | Multi-homed transport — NAT breaks path validation |
+| **GTP-U** (user plane) | Inner IP tunneling — TEID-based demux doesn't survive NAT |
+| **PFCP** (SMF↔UPF) | Node ID carries IP — NAT rewrites break association |
+
+**Solution**: macvlan gives each container a **real IP on the physical network** — the gNB sees the AMF/UPF at a normal IP, no NAT involved.
+
+### What is macvlan?
+
+macvlan is a Linux kernel feature that creates virtual network interfaces (sub-interfaces) on a physical NIC, each with its own MAC address and IP:
+
+```
+Physical NIC: eth0 (192.168.1.100)
+  ├── macvlan child: bts1-cp  → 192.168.1.153 (own MAC)
+  ├── macvlan child: bts1-upf → 192.168.1.154 (own MAC)
+  ├── macvlan child: bts2-cp  → 192.168.1.155 (own MAC)
+  └── macvlan child: bts2-upf → 192.168.1.156 (own MAC)
+```
+
+From the LAN's perspective, these look like **separate physical machines**. The switch/router sees distinct MAC addresses and routes traffic normally. No port mapping, no NAT — just real IPs.
+
+Docker's macvlan driver wraps this into a Docker network:
+```bash
+docker network create -d macvlan \
+    --subnet=192.168.1.0/24 --gateway=192.168.1.1 \
+    -o parent=eth0 bts1-net
+```
+
+### The macvlan shim (host ↔ container communication)
+
+**Problem**: Linux blocks traffic between a macvlan child and its parent interface. This means the **host cannot reach its own containers** via macvlan IPs.
+
+**Solution**: Create a macvlan **shim interface** on the host side and route through it:
+
+```bash
+# Create host-side macvlan sub-interface
+ip link add mac-bts1 link eth0 type macvlan mode bridge
+ip link set mac-bts1 up
+
+# Route container IPs through the shim
+ip route add 192.168.1.153/32 dev mac-bts1   # AMF
+ip route add 192.168.1.154/32 dev mac-bts1   # UPF
+```
+
+Now the host can reach the containers (needed for MongoDB access, health checks, `status.sh`), and the containers can reach the host (needed for MongoDB on host port 27017).
+
+`start.sh` creates the shim automatically. `stop.sh --rm` removes it.
+
+### Why a separate internal bridge for PFCP?
+
+PFCP (Packet Forwarding Control Protocol) is the control channel between SMF and UPF. It carries session management commands — create/modify/delete PDU sessions. This traffic is **internal to the core** and should never be exposed to the LAN.
+
+Each instance gets a private Docker bridge network:
+```
+Instance 1: 10.33.1.0/24  →  SMF: 10.33.1.2  ↔  UPF: 10.33.1.3
+Instance 2: 10.33.2.0/24  →  SMF: 10.33.2.2  ↔  UPF: 10.33.2.3
+Instance 3: 10.33.3.0/24  →  SMF: 10.33.3.2  ↔  UPF: 10.33.3.3
+```
+
+This bridge is marked `internal: true` in Docker — no external routing, no internet access. PFCP stays isolated between SMF↔UPF within each instance.
+
+### macvlan vs VLAN (802.1Q)
+
+| | macvlan | VLAN (802.1Q) |
+|---|---|---|
+| **Layer** | Same VLAN/subnet | Creates separate broadcast domain |
+| **Tagging** | No VLAN tags | Adds 802.1Q tag to frames |
+| **Switch config** | None needed | Requires trunk port on switch |
+| **Use case** | Multiple IPs on one subnet | Network segmentation across subnets |
+| **This project** | ✅ Used for container IPs | Not required (single subnet) |
+
+This project uses **macvlan** (not 802.1Q VLAN) because all BTS instances share the same LAN subnet. If your deployment requires traffic isolation between instances at the network level, you could combine both — create 802.1Q VLAN sub-interfaces on the host, then use macvlan on each VLAN interface.
+
+---
+
 ## Quick Start
 
 ```bash
@@ -133,48 +215,178 @@ bts1-upf:  macvlan 192.168.1.154  +  internal 10.33.1.3
 
 ## Scripts Reference
 
-All scripts are in the `scripts/` directory:
+All scripts are in the `scripts/` directory. Each one is self-contained — run from the repo root.
 
-| Script | Description |
+### build.sh — Compile open5GS from source
+
+Builds open5GS v2.7.5 using a multi-stage Docker build (meson/ninja). Takes ~20 minutes on first run (cached after).
+
+```bash
+./scripts/build.sh              # Full source build (clone + compile)
+./scripts/build.sh --quick      # Skip build, verify existing binaries exist
+```
+
+| Option | Description |
 |---|---|
-| `scripts/env.sh` | Shared environment variables, macvlan helpers, colors |
-| `scripts/build.sh` | Compile open5GS from source (meson/ninja in Docker) |
-| `scripts/docker.sh` | Build Docker images: CP + UPF |
-| `scripts/start.sh --id N --amf-ip X --upf-ip Y` | Start CN instance (macvlan network, containers, routing) |
-| `scripts/stop.sh --id N [--rm]` | Stop (and optionally remove) CN instance |
-| `scripts/stop.sh --all [--rm]` | Stop/remove all instances |
-| `scripts/status.sh [--id N]` | Show instance status (containers, NFs, connectivity) |
-| `scripts/provision.sh [--count N]` | Provision subscribers into shared MongoDB |
-| `scripts/logs.sh --id N [nf]` | Tail container logs (all or specific NF) |
+| _(none)_ | Full build: `Dockerfile.build` → builder container → extracts to `build-output/` |
+| `--quick` | Verify `build-output/open5gs/` exists (useful before `docker.sh`) |
 
-### start.sh options
+Output: `build-output/open5gs/bin/` (all NF binaries) + `build-output/open5gs/lib/` (shared libs)
+
+### docker.sh — Build runtime Docker images
+
+Builds the two runtime images from pre-compiled binaries in `build-output/`:
+
+```bash
+./scripts/docker.sh             # Build CP + UPF images
+```
+
+| Image | Dockerfile | Description |
+|---|---|---|
+| `open5gs-cp:v2.7.5` | `Dockerfile.cp` | Control Plane runtime (all 10 NFs) |
+| `open5gs-upf:v2.7.5` | `Dockerfile.upf` | User Plane runtime (TUN + NAT) |
+
+Requires: `build-output/` from `build.sh`.
+
+### start.sh — Start a CN instance
+
+Creates macvlan network, generates `.env` + configs, starts CP + UPF containers.
+
+```bash
+# Basic: single PLMN, default slice
+./scripts/start.sh --id 1 --amf-ip 192.168.1.153 --upf-ip 192.168.1.154
+
+# Custom PLMN
+./scripts/start.sh --id 1 --amf-ip 192.168.1.153 --upf-ip 192.168.1.154 --mcc 404 --mnc 30
+
+# Multi-PLMN (repeatable --plmn flag)
+./scripts/start.sh --id 1 --amf-ip 192.168.1.153 --upf-ip 192.168.1.154 \
+    --plmn 404:30 --plmn 404:20 --tac 7
+
+# Debug logging (all NFs)
+./scripts/start.sh --id 1 --amf-ip 192.168.1.153 --upf-ip 192.168.1.154 --debug
+
+# Custom UE pool and slice
+./scripts/start.sh --id 1 --amf-ip 192.168.1.153 --upf-ip 192.168.1.154 \
+    --ue-subnet 10.46.0.0/16 --ue-gw 10.46.0.1 --sst 1 --sd 000001
+```
+
+**All options:**
 
 ```
 Required:
   --id N          Instance number (1, 2, 3, ...)
-  --amf-ip IP     AMF/CP IP address (must be on host's network)
-  --upf-ip IP     UPF IP address (must be on host's network)
+  --amf-ip IP     AMF/CP IP address (must be on host's network subnet)
+  --upf-ip IP     UPF IP address (must be on host's network subnet)
 
-Optional:
-  --mcc X         MCC (default: 001)  — single PLMN
-  --mnc Y         MNC (default: 01)   — single PLMN
-  --plmn MCC:MNC  PLMN (repeatable for multi-PLMN, overrides --mcc/--mnc)
+Optional — PLMN:
+  --mcc X         MCC (default: 001)  — single PLMN mode
+  --mnc Y         MNC (default: 01)   — single PLMN mode
+  --plmn MCC:MNC  PLMN (repeatable, overrides --mcc/--mnc for multi-PLMN)
   --tac Z         TAC (default: 1)
+
+Optional — Slice:
   --sst S         SST (default: 3)
   --sd SD         SD (default: 198153)
   --dnn D         DNN (default: internet)
-  --ue-subnet X   UE pool subnet (default: 10.45.0.0/16)
-  --ue-gw X       UE pool gateway (default: 10.45.0.1)
-  --debug         Enable debug logging
+
+Optional — UE pool:
+  --ue-subnet X   UE IP pool subnet (default: 10.45.0.0/16)
+  --ue-gw X       UE pool gateway IP (default: 10.45.0.1)
+
+Optional — Other:
+  --debug         Enable debug logging for all NFs
 ```
 
-**Multi-PLMN example:**
+**What start.sh does step by step:**
+1. Auto-detects the host NIC from AMF IP (`ip route get`)
+2. Derives host IP, subnet, gateway for macvlan
+3. Creates macvlan Docker network + host shim interface
+4. Copies config templates → `instances/btsN/config/`, replaces placeholders
+5. Patches PLMN(s) into AMF config using PyYAML
+6. Generates `.env` at `instances/btsN/.env`
+7. Runs `docker compose up -d` with the static `docker-compose.yaml`
+8. Waits for NRF to be reachable on port 7777
+9. Sets up host routing for UE traffic (NAT + forwarding)
+10. Saves metadata to `instances/btsN/metadata.env`
+
+### stop.sh — Stop / remove instances
+
 ```bash
-./scripts/start.sh --id 1 --amf-ip 192.168.1.153 --upf-ip 192.168.1.154 \
-    --plmn 404:30 --plmn 404:20 --tac 7
+./scripts/stop.sh --id 1         # Stop instance (containers paused, data kept)
+./scripts/stop.sh --id 1 --rm    # Stop + remove (containers, networks, shim, instance dir)
+./scripts/stop.sh --all           # Stop all instances
+./scripts/stop.sh --all --rm      # Stop + remove all instances
 ```
 
-The script **auto-detects** the host network interface from the AMF IP, derives the subnet and gateway, creates the macvlan network, generates an `.env` file, and starts the instance using the static `docker-compose.yaml`.
+| Option | Description |
+|---|---|
+| `--id N` | Target a specific instance |
+| `--all` | Target all instances found in `instances/` |
+| `--rm` | Remove mode: down containers, delete macvlan network + shim, clean UE routes, delete `instances/btsN/` |
+
+Without `--rm`, containers are stopped but networks/configs are preserved (can restart with `docker compose up`).
+
+### status.sh — Show instance status
+
+```bash
+./scripts/status.sh              # Show all instances + MongoDB status
+./scripts/status.sh --id 1       # Show specific instance only
+```
+
+Displays:
+- Container states (running/stopped + health check)
+- Network info (macvlan interface, AMF/UPF IPs, UE pool)
+- NRF registration count (queries NRF REST API)
+- Subscriber count (queries MongoDB)
+- Host MongoDB status
+
+### provision.sh — Provision subscribers
+
+All instances share a single MongoDB database (`open5gs`). Provision once, all BTS instances see the same subscribers.
+
+```bash
+./scripts/provision.sh                                # Default test subscriber
+./scripts/provision.sh --count 10                      # Bulk: 10 subscribers (IMSI auto-incremented)
+./scripts/provision.sh --imsi 001010000050641 --k <key> --opc <opc>  # Custom subscriber
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--count N` | `1` | Number of subscribers to provision (IMSI auto-increments, key last byte rotates) |
+| `--imsi X` | `001010000050641` | Base IMSI (last 10 digits increment for bulk) |
+| `--k X` | `0c57e15a...` | Authentication key K |
+| `--opc X` | `109ee527...` | Operator key OPC |
+| `--sst N` | `3` | Slice SST |
+| `--sd X` | `198153` | Slice SD |
+| `--dnn X` | `internet` | Data Network Name |
+| `--id N` | _(ignored)_ | Accepted but ignored (single shared DB) |
+
+### logs.sh — Tail container logs
+
+```bash
+./scripts/logs.sh --id 1           # All container logs (docker compose logs)
+./scripts/logs.sh --id 1 amf       # AMF log file (/var/log/open5gs/amf.log)
+./scripts/logs.sh --id 1 smf       # SMF log file
+./scripts/logs.sh --id 1 upf       # UPF log file
+./scripts/logs.sh --id 1 nrf       # NRF log file
+```
+
+| Argument | Description |
+|---|---|
+| `--id N` | **Required** — instance number |
+| `amf`, `smf`, `nrf`, `scp`, `ausf`, `udm`, `udr`, `pcf`, `nssf`, `bsf` | Tail specific NF log from CP container |
+| `upf` | Tail UPF log from UPF container |
+| _(none)_ | Tail all docker compose logs (`-f --tail=50`) |
+
+### env.sh — Shared environment
+
+Sourced by all other scripts. Provides:
+- Default values (`DEFAULT_MCC`, `DEFAULT_MNC`, `DEFAULT_IMSI`, etc.)
+- Image names and versions (`IMAGE_CP`, `IMAGE_UPF`, `OPEN5GS_VERSION`)
+- Port constants (`NGAP_PORT=38412`, `GTPU_PORT=2152`)
+- Helper functions: `detect_interface()`, `get_host_ip()`, `create_macvlan_network()`, `create_macvlan_shim()`, `remove_macvlan_shim()`, `wait_port()`
+- Color output: `log()`, `ok()`, `warn()`, `err()`, `hdr()`
 
 ---
 
