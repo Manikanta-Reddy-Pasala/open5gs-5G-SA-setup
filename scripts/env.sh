@@ -57,6 +57,113 @@ detect_interface() {
         | awk '{for(i=1;i<=NF;i++) if($i=="dev") print $(i+1); exit}'
 }
 
+# Auto-detect the best physical interface for macvlan
+# Skips: loopback, docker/veth/virbr/br- (virtual), /32 (cloud point-to-point)
+# Prefers: interface with default route, real subnet (/16../24), state UP
+detect_physical_interface() {
+    local best="" best_score=0
+    local iface ip_cidr prefix state has_default
+
+    while IFS= read -r line; do
+        # ip -br format: "enp1s0    UP    192.168.1.50/24"
+        iface=$(echo "$line" | awk '{print $1}')
+        state=$(echo "$line" | awk '{print $2}')
+        ip_cidr=$(echo "$line" | awk '{print $3}')
+
+        # Skip virtual/internal interfaces
+        case "$iface" in
+            lo|docker*|veth*|virbr*|br-*|dummy*|mac-*|flannel*|cni*|cali*) continue ;;
+        esac
+
+        # Must be UP with an IPv4 address
+        [ "$state" != "UP" ] && continue
+        [ -z "$ip_cidr" ] && continue
+
+        # Extract prefix length
+        prefix="${ip_cidr#*/}"
+        [ -z "$prefix" ] && continue
+
+        # Skip /32 (cloud point-to-point, not a real LAN)
+        [ "$prefix" -eq 32 ] 2>/dev/null && continue
+
+        # Score this interface
+        local score=1
+
+        # Prefer real LAN subnets (/16../24)
+        [ "$prefix" -ge 16 ] && [ "$prefix" -le 24 ] && score=$((score + 2))
+
+        # Prefer interface with default route
+        if ip route show default dev "$iface" 2>/dev/null | grep -q .; then
+            score=$((score + 3))
+        fi
+
+        # Prefer known physical naming (enp*, eth*, eno*, ens*)
+        case "$iface" in
+            enp*|eth*|eno*|ens*) score=$((score + 1)) ;;
+        esac
+
+        if [ "$score" -gt "$best_score" ]; then
+            best="$iface"
+            best_score="$score"
+        fi
+    done < <(ip -4 -br addr show 2>/dev/null)
+
+    [ -n "$best" ] && echo "$best"
+}
+
+# Validate that an interface is suitable for macvlan
+validate_macvlan_interface() {
+    local iface="$1"
+
+    # Must exist
+    if ! ip link show "$iface" >/dev/null 2>&1; then
+        err "Interface '${iface}' does not exist"
+        return 1
+    fi
+
+    # Must be UP
+    local state
+    state=$(ip -br link show "$iface" 2>/dev/null | awk '{print $2}')
+    if [[ "$state" != *UP* ]]; then
+        err "Interface '${iface}' is not UP (state: ${state})"
+        return 1
+    fi
+
+    # Must have an IPv4 address
+    local cidr
+    cidr=$(ip -4 addr show "$iface" | awk '/inet / {print $2; exit}')
+    if [ -z "$cidr" ]; then
+        err "Interface '${iface}' has no IPv4 address"
+        return 1
+    fi
+
+    # Warn if /32 (macvlan needs a real subnet)
+    local prefix="${cidr#*/}"
+    if [ "$prefix" = "32" ]; then
+        warn "Interface '${iface}' has a /32 address (${cidr}) — macvlan needs a real subnet"
+        warn "Consider using a bridge interface instead"
+        return 1
+    fi
+
+    # Warn about known virtual interfaces
+    case "$iface" in
+        virbr*|docker*|br-*)
+            warn "Interface '${iface}' looks like a virtual bridge — macvlan may not work as expected"
+            ;;
+    esac
+
+    # Test macvlan capability
+    local test_name="macvlan-test-$$"
+    if ip link add "$test_name" link "$iface" type macvlan mode bridge 2>/dev/null; then
+        ip link del "$test_name" 2>/dev/null
+        ok "Interface '${iface}' supports macvlan (${cidr})"
+        return 0
+    else
+        err "Interface '${iface}' does not support macvlan — check promiscuous mode on hypervisor"
+        return 1
+    fi
+}
+
 # Get subnet CIDR of an interface (e.g., "192.168.1.0/24")
 get_interface_subnet() {
     local iface="$1"
@@ -78,12 +185,14 @@ get_host_ip() {
     ip -4 addr show "$iface" | awk '/inet / {split($2,a,"/"); print a[1]; exit}'
 }
 
-# Create macvlan Docker network for an instance
+# Create macvlan Docker network — shared per parent interface
+# Multiple instances on the same LAN share one macvlan network
 create_macvlan_network() {
-    local id="$1" parent="$2" subnet="$3" gateway="$4"
-    local net_name="bts${id}-net"
+    local parent="$2" subnet="$3" gateway="$4"
+    local net_name="open5gs-${parent}"
     if docker network inspect "$net_name" >/dev/null 2>&1; then
-        log "Network ${net_name} already exists"
+        log "Network ${net_name} already exists (shared)"
+        echo "$net_name"
         return 0
     fi
     docker network create -d macvlan \
@@ -91,6 +200,13 @@ create_macvlan_network() {
         --gateway="$gateway" \
         -o parent="$parent" \
         "$net_name"
+    echo "$net_name"
+}
+
+# Get macvlan network name for a parent interface
+get_macvlan_net_name() {
+    local parent="$1"
+    echo "open5gs-${parent}"
 }
 
 # Create host-side macvlan shim for host<->container communication

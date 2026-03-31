@@ -3,10 +3,10 @@
 # start.sh — Start a CN (Core Network) instance for a BTS
 # ============================================================
 # Usage:
-#   ./scripts/start.sh --id 1 --amf-ip 192.168.1.153 --upf-ip 192.168.1.154
-#   ./scripts/start.sh --id 2 --amf-ip 192.168.1.155 --upf-ip 192.168.1.156 --mcc 404 --mnc 30
-#   ./scripts/start.sh --id 1 --amf-ip 10.0.0.153 --upf-ip 10.0.0.154 --plmn 404:30 --plmn 404:20
-#   ./scripts/start.sh --id 1 --amf-ip 10.0.0.153 --upf-ip 10.0.0.154 --debug
+#   ./scripts/start.sh --id 1 --amf-ip <AMF_IP> --upf-ip <UPF_IP>
+#   ./scripts/start.sh --id 2 --amf-ip <AMF_IP> --upf-ip <UPF_IP> --mcc 404 --mnc 30
+#   ./scripts/start.sh --id 1 --amf-ip <AMF_IP> --upf-ip <UPF_IP> --plmn 404:30 --plmn 404:20
+#   ./scripts/start.sh --id 1 --amf-ip <AMF_IP> --upf-ip <UPF_IP> --debug
 #
 # Each instance gets:
 #   - Macvlan network on host's physical interface
@@ -22,6 +22,7 @@ cd "$PROJECT_DIR"
 INSTANCE_ID=""
 AMF_IP=""
 UPF_IP=""
+IFACE_OVERRIDE=""
 MCC="$DEFAULT_MCC"
 MNC="$DEFAULT_MNC"
 TAC="$DEFAULT_TAC"
@@ -39,6 +40,7 @@ while [[ $# -gt 0 ]]; do
         --id)        INSTANCE_ID="$2"; shift ;;
         --amf-ip)    AMF_IP="$2"; shift ;;
         --upf-ip)    UPF_IP="$2"; shift ;;
+        --iface)     IFACE_OVERRIDE="$2"; shift ;;
         --mcc)       MCC="$2"; MCC_MNC_SET=true; shift ;;
         --mnc)       MNC="$2"; MCC_MNC_SET=true; shift ;;
         --plmn)      PLMN_LIST+=("$2"); shift ;;
@@ -77,15 +79,49 @@ if [ -z "$INSTANCE_ID" ] || [ -z "$AMF_IP" ] || [ -z "$UPF_IP" ]; then
     err "  --dnn D         DNN (default: ${DEFAULT_DNN})"
     err "  --ue-subnet X   UE pool subnet (default: ${DEFAULT_UE_SUBNET})"
     err "  --ue-gw X       UE pool gateway (default: ${DEFAULT_UE_GW})"
+    err "  --iface NAME    Force network interface (default: auto-detect from AMF IP)"
     err "  --debug         Enable debug logging"
     exit 1
 fi
 
 # ── Auto-detect network config ────────────────────────────────
-PARENT_IFACE=$(detect_interface "$AMF_IP")
+if [ -n "$IFACE_OVERRIDE" ]; then
+    # User explicitly specified the interface
+    PARENT_IFACE="$IFACE_OVERRIDE"
+    log "Using user-specified interface: ${PARENT_IFACE}"
+else
+    # Try route-based detection first (works when AMF IP is on a known subnet)
+    PARENT_IFACE=$(detect_interface "$AMF_IP")
+
+    # If route-based detection returns a virtual/shim interface, fall back to smart detection
+    case "$PARENT_IFACE" in
+        mac-*|docker*|veth*|virbr*|"")
+            log "Route-based detection returned '${PARENT_IFACE:-nothing}', trying smart detection..."
+            PARENT_IFACE=$(detect_physical_interface)
+            if [ -n "$PARENT_IFACE" ]; then
+                log "Auto-detected physical interface: ${PARENT_IFACE}"
+            fi
+            ;;
+        *)
+            log "Auto-detected interface from routing: ${PARENT_IFACE}"
+            ;;
+    esac
+fi
+
 if [ -z "$PARENT_IFACE" ]; then
     err "Cannot determine network interface for AMF IP ${AMF_IP}"
-    err "Ensure the IP is on a reachable subnet of this host"
+    err "Available interfaces:"
+    ip -4 -br addr show | while read -r line; do err "  $line"; done
+    err ""
+    err "Use --iface <name> to specify manually, e.g.:"
+    err "  ./scripts/start.sh --id 1 --amf-ip ${AMF_IP} --upf-ip ${UPF_IP} --iface enp1s0"
+    exit 1
+fi
+
+# Validate the interface supports macvlan
+if ! validate_macvlan_interface "$PARENT_IFACE"; then
+    err "Interface '${PARENT_IFACE}' failed macvlan validation"
+    err "Use --iface <name> to specify a different interface"
     exit 1
 fi
 
@@ -207,7 +243,7 @@ sed -i "s/sd: [0-9a-fA-F]*/sd: ${SD}/g" "${INST_CONFIG}/nssf.yaml"
 
 # ── Create macvlan network ────────────────────────────────────
 log "Creating macvlan network on ${PARENT_IFACE}..."
-create_macvlan_network "$INSTANCE_ID" "$PARENT_IFACE" "$HOST_SUBNET" "$HOST_GW"
+MACVLAN_NET=$(create_macvlan_network "$INSTANCE_ID" "$PARENT_IFACE" "$HOST_SUBNET" "$HOST_GW")
 
 # Host-side macvlan shim for host<->container communication
 log "Creating macvlan shim for host access..."
@@ -228,6 +264,7 @@ UPF_IP=${UPF_IP}
 PFCP_CP_IP=${PFCP_CP_IP}
 PFCP_UPF_IP=${PFCP_UPF_IP}
 INTERNAL_SUBNET=${INTERNAL_SUBNET}
+MACVLAN_NET=${MACVLAN_NET}
 MONGO_IP=${MONGO_IP}
 DB_NAME=${DB_NAME}
 ENVEOF

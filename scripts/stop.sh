@@ -48,12 +48,13 @@ stop_instance() {
     fi
 
     # Load saved metadata for IP addresses
-    local amf_ip="" upf_ip="" ue_subnet=""
+    local amf_ip="" upf_ip="" ue_subnet="" parent_iface=""
     if [ -f "$metadata" ]; then
         source "$metadata"
         amf_ip="${AMF_IP:-}"
         upf_ip="${UPF_IP:-}"
         ue_subnet="${UE_SUBNET:-}"
+        parent_iface="${PARENT_IFACE:-}"
     else
         warn "No metadata.env for ${name} — cannot clean up networking"
     fi
@@ -75,8 +76,25 @@ stop_instance() {
             remove_macvlan_shim "$id" "$amf_ip" "$upf_ip"
         fi
 
-        # Remove macvlan Docker network
-        docker network rm "bts${id}-net" 2>/dev/null || true
+        # Remove shared macvlan network only if no other instances use the same interface
+        if [ -n "$parent_iface" ]; then
+            local net_name="open5gs-${parent_iface}"
+            local other_users=0
+            for other_dir in "${PROJECT_DIR}/instances"/bts*; do
+                [ -d "$other_dir" ] || continue
+                [ "$other_dir" = "$inst_dir" ] && continue
+                local other_meta="${other_dir}/metadata.env"
+                if [ -f "$other_meta" ] && grep -q "PARENT_IFACE=${parent_iface}" "$other_meta"; then
+                    other_users=$((other_users + 1))
+                fi
+            done
+            if [ "$other_users" -eq 0 ]; then
+                docker network rm "$net_name" 2>/dev/null || true
+                log "Removed shared network ${net_name}"
+            else
+                log "Keeping shared network ${net_name} (${other_users} other instance(s) still using it)"
+            fi
+        fi
 
         rm -rf "${inst_dir}"
         ok "Instance ${name} removed (containers + network + shim cleaned)"
