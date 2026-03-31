@@ -5,6 +5,7 @@
 # Usage:
 #   ./scripts/start.sh --id 1 --amf-ip 192.168.1.153 --upf-ip 192.168.1.154
 #   ./scripts/start.sh --id 2 --amf-ip 192.168.1.155 --upf-ip 192.168.1.156 --mcc 404 --mnc 30
+#   ./scripts/start.sh --id 1 --amf-ip 10.0.0.153 --upf-ip 10.0.0.154 --plmn 404:30 --plmn 404:20
 #   ./scripts/start.sh --id 1 --amf-ip 10.0.0.153 --upf-ip 10.0.0.154 --debug
 #
 # Each instance gets:
@@ -30,14 +31,17 @@ DNN="$DEFAULT_DNN"
 UE_SUBNET="$DEFAULT_UE_SUBNET"
 UE_GW="$DEFAULT_UE_GW"
 DEBUG_MODE=false
+PLMN_LIST=()       # Multi-PLMN: --plmn MCC:MNC (repeatable)
+MCC_MNC_SET=false   # Track if --mcc/--mnc was used
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --id)        INSTANCE_ID="$2"; shift ;;
         --amf-ip)    AMF_IP="$2"; shift ;;
         --upf-ip)    UPF_IP="$2"; shift ;;
-        --mcc)       MCC="$2"; shift ;;
-        --mnc)       MNC="$2"; shift ;;
+        --mcc)       MCC="$2"; MCC_MNC_SET=true; shift ;;
+        --mnc)       MNC="$2"; MCC_MNC_SET=true; shift ;;
+        --plmn)      PLMN_LIST+=("$2"); shift ;;
         --tac)       TAC="$2"; shift ;;
         --sst)       SST="$2"; shift ;;
         --sd)        SD="$2"; shift ;;
@@ -50,6 +54,11 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
+# Build final PLMN list: --plmn takes priority, else use --mcc/--mnc, else default
+if [ ${#PLMN_LIST[@]} -eq 0 ]; then
+    PLMN_LIST=("${MCC}:${MNC}")
+fi
+
 if [ -z "$INSTANCE_ID" ] || [ -z "$AMF_IP" ] || [ -z "$UPF_IP" ]; then
     err "Usage: ./scripts/start.sh --id <N> --amf-ip <IP> --upf-ip <IP> [options]"
     err ""
@@ -59,8 +68,9 @@ if [ -z "$INSTANCE_ID" ] || [ -z "$AMF_IP" ] || [ -z "$UPF_IP" ]; then
     err "  --upf-ip IP     UPF IP address (on host network)"
     err ""
     err "Optional:"
-    err "  --mcc X         MCC (default: ${DEFAULT_MCC})"
-    err "  --mnc Y         MNC (default: ${DEFAULT_MNC})"
+    err "  --mcc X         MCC (default: ${DEFAULT_MCC})  — single PLMN"
+    err "  --mnc Y         MNC (default: ${DEFAULT_MNC})  — single PLMN"
+    err "  --plmn MCC:MNC  PLMN (repeatable for multi-PLMN, overrides --mcc/--mnc)"
     err "  --tac Z         TAC (default: ${DEFAULT_TAC})"
     err "  --sst S         SST (default: ${DEFAULT_SST})"
     err "  --sd SD         SD (default: ${DEFAULT_SD})"
@@ -99,6 +109,8 @@ COMPOSE_PROJECT="bts${INSTANCE_ID}"
 LOG_LEVEL="info"
 [ "$DEBUG_MODE" = true ] && LOG_LEVEL="debug"
 
+PLMN_DISPLAY=$(IFS=', '; echo "${PLMN_LIST[*]}")
+
 hdr ""
 hdr "  Starting CN Instance: ${INSTANCE_NAME}"
 hdr "  ─────────────────────────────────"
@@ -107,7 +119,7 @@ log "  UPF IP:     ${UPF_IP}  (GTP-U:${GTPU_PORT})"
 log "  Interface:  ${PARENT_IFACE}  (subnet: ${HOST_SUBNET})"
 log "  Host IP:    ${HOST_IP}"
 log "  MongoDB:    ${MONGO_IP}:27017 (db: ${DB_NAME})"
-log "  PLMN:       MCC=${MCC} MNC=${MNC} TAC=${TAC}"
+log "  PLMN:       ${PLMN_DISPLAY}  TAC=${TAC}"
 log "  Slice:      SST=${SST} SD=${SD}"
 log "  UE Pool:    ${UE_SUBNET}"
 hdr ""
@@ -134,19 +146,48 @@ if [ "$DEBUG_MODE" = true ]; then
     done
 fi
 
-# Patch PLMN in AMF
-python3 - "${INST_CONFIG}/amf.yaml" "$MCC" "$MNC" "$TAC" "$SST" "$SD" <<'PYEOF'
-import sys, re
-cfg_file, mcc, mnc, tac, sst, sd = sys.argv[1:7]
+# Patch PLMN(s) in AMF — supports multiple PLMNs
+PLMN_JSON=$(printf '%s\n' "${PLMN_LIST[@]}" | python3 -c "
+import sys, json
+plmns = []
+for line in sys.stdin:
+    mcc, mnc = line.strip().split(':')
+    plmns.append({'mcc': mcc, 'mnc': mnc})
+print(json.dumps(plmns))
+")
+
+python3 - "${INST_CONFIG}/amf.yaml" "$TAC" "$SST" "$SD" "$PLMN_JSON" <<'PYEOF'
+import sys, json, yaml
+
+cfg_file, tac, sst, sd, plmn_json = sys.argv[1:6]
+plmns = json.loads(plmn_json)
+
 with open(cfg_file) as f:
-    content = f.read()
-content = re.sub(r'mcc: \d+', f'mcc: {mcc}', content)
-content = re.sub(r'mnc: \d+', f'mnc: {mnc}', content)
-content = re.sub(r'tac: \d+', f'tac: {tac}', content)
-content = re.sub(r'sst: \d+', f'sst: {sst}', content)
-content = re.sub(r'sd: [0-9a-fA-F]+', f'sd: {sd}', content)
+    cfg = yaml.safe_load(f)
+
+# guami: one entry per PLMN (same amf_id)
+cfg['amf']['guami'] = [
+    {'plmn_id': {'mcc': int(p['mcc']), 'mnc': int(p['mnc'])},
+     'amf_id': {'region': 2, 'set': 1}}
+    for p in plmns
+]
+
+# tai: one entry per PLMN (same tac)
+cfg['amf']['tai'] = [
+    {'plmn_id': {'mcc': int(p['mcc']), 'mnc': int(p['mnc'])},
+     'tac': int(tac)}
+    for p in plmns
+]
+
+# plmn_support: one entry per PLMN (same slice)
+cfg['amf']['plmn_support'] = [
+    {'plmn_id': {'mcc': int(p['mcc']), 'mnc': int(p['mnc'])},
+     's_nssai': [{'sst': int(sst), 'sd': int(sd)}]}
+    for p in plmns
+]
+
 with open(cfg_file, 'w') as f:
-    f.write(content)
+    yaml.dump(cfg, f, default_flow_style=False, sort_keys=False)
 PYEOF
 
 # Patch slice in SMF
@@ -267,8 +308,7 @@ HOST_GW=${HOST_GW}
 MONGO_IP=${MONGO_IP}
 UE_SUBNET=${UE_SUBNET}
 UE_GW=${UE_GW}
-MCC=${MCC}
-MNC=${MNC}
+PLMN_LIST="${PLMN_DISPLAY}"
 TAC=${TAC}
 SST=${SST}
 SD=${SD}
@@ -285,7 +325,7 @@ hdr "  ── gNB connects to (real IPs on ${PARENT_IFACE}) ──"
 log "    NGAP/SCTP: ${AMF_IP}:${NGAP_PORT}"
 log "    GTP-U/UDP: ${UPF_IP}:${GTPU_PORT}"
 hdr ""
-log "  PLMN:   MCC=${MCC} MNC=${MNC} TAC=${TAC}"
+log "  PLMN:   ${PLMN_DISPLAY}  TAC=${TAC}"
 log "  Slice:  SST=${SST} SD=${SD}"
 log "  UE:     ${UE_SUBNET}"
 log "  DB:     mongodb://${MONGO_IP}/${DB_NAME}"
