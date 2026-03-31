@@ -30,7 +30,7 @@ services:
     environment:
       DB_URI: mongodb://${MONGO_IP}/${DB_NAME}
     healthcheck:
-      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/7777 && echo ok"]
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/${AMF_IP}/7777 && echo ok"]
       interval: 1s
       timeout: 1s
       start_period: 1s

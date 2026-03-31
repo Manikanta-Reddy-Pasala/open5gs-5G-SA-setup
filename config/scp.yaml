@@ -6,8 +6,8 @@ logger:
 scp:
   sbi:
     server:
-      - address: 0.0.0.0
+      - address: __CP_IP__
         port: 7778
     client:
       nrf:
-        - uri: http://127.0.0.1:7777
+        - uri: http://__CP_IP__:7777

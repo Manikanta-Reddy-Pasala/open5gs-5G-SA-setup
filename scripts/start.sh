@@ -267,8 +267,8 @@ ENVEOF
 log "Starting containers (host networking)..."
 docker compose -p "${COMPOSE_PROJECT}" --env-file "${ENV_FILE}" -f "${PROJECT_DIR}/docker-compose.yaml" up -d
 
-log "Waiting for Control Plane (NRF on 127.0.0.1:7777)..."
-wait_port "127.0.0.1" 7777 60
+log "Waiting for Control Plane (NRF on ${AMF_IP}:7777)..."
+wait_port "${AMF_IP}" 7777 60
 
 # ── Set up host routing for UE traffic ────────────────────────
 log "Setting up data plane routing..."

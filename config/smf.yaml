@@ -6,11 +6,11 @@ logger:
 smf:
   sbi:
     server:
-      - address: 0.0.0.0
+      - address: __CP_IP__
         port: 7781
     client:
       scp:
-        - uri: http://127.0.0.1:7778
+        - uri: http://__CP_IP__:7778
   pfcp:
     server:
       - address: __PFCP_CP_IP__
@@ -19,13 +19,13 @@ smf:
         - address: __PFCP_UPF_IP__
   gtpc:
     server:
-      - address: 0.0.0.0
+      - address: __CP_IP__
   gtpu:
     server:
-      - address: 0.0.0.0
+      - address: __CP_IP__
   metrics:
     server:
-      - address: 0.0.0.0
+      - address: __CP_IP__
         port: 9091
   session:
     - subnet: __UE_SUBNET__

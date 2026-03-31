@@ -8,8 +8,8 @@ logger:
 udr:
   sbi:
     server:
-      - address: 0.0.0.0
+      - address: __CP_IP__
         port: 7786
     client:
       scp:
-        - uri: http://127.0.0.1:7778
+        - uri: http://__CP_IP__:7778

@@ -17,5 +17,5 @@ nrf:
         mnc: 01
   sbi:
     server:
-      - address: 0.0.0.0
+      - address: __CP_IP__
         port: 7777

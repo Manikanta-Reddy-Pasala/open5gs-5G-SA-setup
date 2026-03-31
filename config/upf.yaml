@@ -16,5 +16,5 @@ upf:
       dnn: internet
   metrics:
     server:
-      - address: 0.0.0.0
+      - address: __UPF_IP__
         port: 9092
