@@ -119,12 +119,10 @@ if [ -z "$PARENT_IFACE" ]; then
 fi
 
 # Detect network driver (macvlan preferred, ipvlan fallback for KVM)
-NET_DRIVER=$(detect_network_driver "$PARENT_IFACE")
-if [ -z "$NET_DRIVER" ]; then
-    err "Interface '${PARENT_IFACE}' supports neither macvlan nor ipvlan"
+NET_DRIVER=$(detect_network_driver "$PARENT_IFACE") || {
     err "Use --iface <name> to specify a different interface"
     exit 1
-fi
+}
 
 HOST_IP=$(get_host_ip "$PARENT_IFACE")
 HOST_SUBNET=$(get_interface_subnet "$PARENT_IFACE")

@@ -42,11 +42,11 @@ BOLD=$'\033[1m'
 NC=$'\033[0m'
 
 # ── Logging ─────────────────────────────────────────────────
-log()  { echo "[$(date '+%H:%M:%S')] $1"; }
-ok()   { echo "${GREEN}[$(date '+%H:%M:%S')] ✓ $1${NC}"; }
-warn() { echo "${YELLOW}[$(date '+%H:%M:%S')] ⚠ $1${NC}"; }
-err()  { echo "${RED}[$(date '+%H:%M:%S')] ✗ $1${NC}"; }
-hdr()  { echo "${BOLD}${CYAN}$1${NC}"; }
+log()  { echo "[$(date '+%H:%M:%S')] $1" >&2; }
+ok()   { echo "${GREEN}[$(date '+%H:%M:%S')] ✓ $1${NC}" >&2; }
+warn() { echo "${YELLOW}[$(date '+%H:%M:%S')] ⚠ $1${NC}" >&2; }
+err()  { echo "${RED}[$(date '+%H:%M:%S')] ✗ $1${NC}" >&2; }
+hdr()  { echo "${BOLD}${CYAN}$1${NC}" >&2; }
 
 # ── Macvlan helpers ─────────────────────────────────────────
 
