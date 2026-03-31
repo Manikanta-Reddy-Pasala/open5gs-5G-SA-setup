@@ -48,13 +48,14 @@ stop_instance() {
     fi
 
     # Load saved metadata for IP addresses
-    local amf_ip="" upf_ip="" ue_subnet="" parent_iface=""
+    local amf_ip="" upf_ip="" ue_subnet="" parent_iface="" host_prefix=""
     if [ -f "$metadata" ]; then
         source "$metadata"
         amf_ip="${AMF_IP:-}"
         upf_ip="${UPF_IP:-}"
         ue_subnet="${UE_SUBNET:-}"
         parent_iface="${PARENT_IFACE:-}"
+        host_prefix="${HOST_PREFIX:-}"
     else
         warn "No metadata.env for ${name} — cannot clean up networking"
     fi
@@ -71,33 +72,20 @@ stop_instance() {
             iptables -D FORWARD -d "${ue_subnet}" -j ACCEPT 2>/dev/null || true
         fi
 
-        # Cleanup macvlan shim + routes
-        if [ -n "$amf_ip" ] && [ -n "$upf_ip" ]; then
-            remove_macvlan_shim "$id" "$amf_ip" "$upf_ip"
-        fi
-
-        # Remove shared macvlan network only if no other instances use the same interface
-        if [ -n "$parent_iface" ]; then
-            local net_name="open5gs-${parent_iface}"
-            local other_users=0
-            for other_dir in "${PROJECT_DIR}/instances"/bts*; do
-                [ -d "$other_dir" ] || continue
-                [ "$other_dir" = "$inst_dir" ] && continue
-                local other_meta="${other_dir}/metadata.env"
-                if [ -f "$other_meta" ] && grep -q "PARENT_IFACE=${parent_iface}" "$other_meta"; then
-                    other_users=$((other_users + 1))
-                fi
-            done
-            if [ "$other_users" -eq 0 ]; then
-                docker network rm "$net_name" 2>/dev/null || true
-                log "Removed shared network ${net_name}"
-            else
-                log "Keeping shared network ${net_name} (${other_users} other instance(s) still using it)"
+        # Remove secondary IPs from host interface
+        if [ -n "$parent_iface" ] && [ -n "$host_prefix" ]; then
+            if [ -n "$amf_ip" ]; then
+                ip addr del "${amf_ip}/${host_prefix}" dev "$parent_iface" 2>/dev/null || true
+                log "Removed ${amf_ip}/${host_prefix} from ${parent_iface}"
+            fi
+            if [ -n "$upf_ip" ]; then
+                ip addr del "${upf_ip}/${host_prefix}" dev "$parent_iface" 2>/dev/null || true
+                log "Removed ${upf_ip}/${host_prefix} from ${parent_iface}"
             fi
         fi
 
         rm -rf "${inst_dir}"
-        ok "Instance ${name} removed (containers + network + shim cleaned)"
+        ok "Instance ${name} removed (containers + secondary IPs cleaned)"
     else
         hdr "Stopping instance ${name}..."
         compose_cmd "${name}" "${inst_dir}" stop 2>/dev/null || true
