@@ -162,7 +162,7 @@ hdr ""
 # ── Generate instance config ─────────────────────────────────
 INST_DIR="${PROJECT_DIR}/instances/${INSTANCE_NAME}"
 INST_CONFIG="${INST_DIR}/config"
-mkdir -p "${INST_CONFIG}" "${INST_DIR}/logs/cp" "${INST_DIR}/logs/upf"
+mkdir -p "${INST_CONFIG}" "${INST_DIR}/logs"
 
 # Copy base configs and replace all placeholders in one pass
 for f in nrf.yaml scp.yaml amf.yaml smf.yaml upf.yaml ausf.yaml udm.yaml udr.yaml pcf.yaml nssf.yaml bsf.yaml; do
@@ -177,10 +177,9 @@ for f in nrf.yaml scp.yaml amf.yaml smf.yaml upf.yaml ausf.yaml udm.yaml udr.yam
         "${PROJECT_DIR}/config/${f}" > "${INST_CONFIG}/${f}"
 done
 
-# Copy entrypoint scripts for containers
-cp "${PROJECT_DIR}/config/start-cp.sh" "${INST_CONFIG}/start-cp.sh"
-cp "${PROJECT_DIR}/config/start-upf.sh" "${INST_CONFIG}/start-upf.sh"
-chmod +x "${INST_CONFIG}/start-cp.sh" "${INST_CONFIG}/start-upf.sh"
+# Copy entrypoint script for container
+cp "${PROJECT_DIR}/config/start-all.sh" "${INST_CONFIG}/start-all.sh"
+chmod +x "${INST_CONFIG}/start-all.sh"
 
 # Patch log level
 if [ "$DEBUG_MODE" = true ]; then
@@ -262,8 +261,7 @@ ENV_FILE="${INST_DIR}/.env"
 cat > "${ENV_FILE}" <<ENVEOF
 # Auto-generated for ${INSTANCE_NAME} — used by docker-compose.yaml
 INSTANCE_NAME=${INSTANCE_NAME}
-IMAGE_CP=${IMAGE_CP}
-IMAGE_UPF=${IMAGE_UPF}
+IMAGE=${IMAGE}
 INST_CONFIG=${INST_CONFIG}
 INST_DIR=${INST_DIR}
 AMF_IP=${AMF_IP}

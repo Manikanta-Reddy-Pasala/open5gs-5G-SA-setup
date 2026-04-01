@@ -13,8 +13,7 @@ IP_CMD=$(command -v ip 2>/dev/null || echo "/sbin/ip")
 
 # ── Build constants ─────────────────────────────────────────
 OPEN5GS_VERSION="v2.7.5"
-IMAGE_CP="open5gs-cp:${OPEN5GS_VERSION}"
-IMAGE_UPF="open5gs-upf:${OPEN5GS_VERSION}"
+IMAGE="open5gs:${OPEN5GS_VERSION}"
 
 # ── Default PLMN / subscriber ──────────────────────────────
 DEFAULT_MCC="001"

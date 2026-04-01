@@ -1,0 +1,49 @@
+# ============================================================
+# open5GS Complete Runtime — CP (10 NFs) + UPF in one image
+# ============================================================
+# Build:
+#   docker build -f Dockerfile.all -t open5gs:v2.7.5 .
+#
+# Requires build-output/ from Dockerfile.build:
+#   docker build -f Dockerfile.build -t open5gs-builder:v2.7.5 .
+#   docker run --rm -v $(pwd)/build-output:/export open5gs-builder:v2.7.5
+# ============================================================
+
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgnutls30 libgcrypt20 libssl3 \
+    libidn12 libmongoc-1.0-0 libbson-1.0-0 \
+    libsctp1 libmicrohttpd12 \
+    libcurl4 libnghttp2-14 \
+    libyaml-0-2 libtalloc2 \
+    libmaxminddb0 libldns3 \
+    iproute2 iptables iputils-ping net-tools tcpdump \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /open5gs
+
+# All 11 NF binaries (10 CP + UPF)
+COPY build-output/open5gs/bin/open5gs-nrfd  ./
+COPY build-output/open5gs/bin/open5gs-scpd  ./
+COPY build-output/open5gs/bin/open5gs-amfd  ./
+COPY build-output/open5gs/bin/open5gs-smfd  ./
+COPY build-output/open5gs/bin/open5gs-ausfd ./
+COPY build-output/open5gs/bin/open5gs-udmd  ./
+COPY build-output/open5gs/bin/open5gs-udrd  ./
+COPY build-output/open5gs/bin/open5gs-pcfd  ./
+COPY build-output/open5gs/bin/open5gs-nssfd ./
+COPY build-output/open5gs/bin/open5gs-bsfd  ./
+COPY build-output/open5gs/bin/open5gs-upfd  ./
+
+COPY build-output/open5gs/lib/ /usr/local/lib/
+RUN ldconfig
+
+RUN chmod +x ./open5gs-*
+RUN mkdir -p /var/log/open5gs /etc/open5gs
+
+EXPOSE 7777 7778 7780 7781 7782 7783 7784 7785 7786 7787 38412/sctp 2152/udp 8805/udp
+
+ENTRYPOINT ["/bin/bash", "/opt/start-all.sh"]
