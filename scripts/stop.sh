@@ -3,44 +3,44 @@
 # stop.sh — Stop a CN instance (or all)
 # ============================================================
 # Usage:
-#   ./scripts/stop.sh --id 1         # Stop instance bts1
-#   ./scripts/stop.sh --all           # Stop all instances
-#   ./scripts/stop.sh --id 1 --rm    # Stop and remove (containers + network + shim)
+#   ./scripts/stop.sh --trx-ip 10.100.0.11         # Stop instance
+#   ./scripts/stop.sh --all                          # Stop all instances
+#   ./scripts/stop.sh --trx-ip 10.100.0.11 --rm    # Stop and remove
 # ============================================================
 
 set -uo pipefail
 source "$(dirname "$0")/env.sh"
 cd "$PROJECT_DIR"
 
-INSTANCE_ID=""
+TRX_IP=""
 STOP_ALL=false
 REMOVE=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --id)   INSTANCE_ID="$2"; shift ;;
-        --all)  STOP_ALL=true ;;
-        --rm)   REMOVE=true ;;
+        --trx-ip) TRX_IP="$2"; shift ;;
+        --all)    STOP_ALL=true ;;
+        --rm)     REMOVE=true ;;
         *) err "Unknown option: $1"; exit 1 ;;
     esac
     shift
 done
 
 compose_cmd() {
-    local name="$1" inst_dir="$2"; shift 2
+    local project="$1" inst_dir="$2"; shift 2
     local env_file="${inst_dir}/.env"
     if [ -f "$env_file" ]; then
-        docker compose -p "${name}" --env-file "${env_file}" -f "${PROJECT_DIR}/docker-compose.yaml" "$@"
+        docker compose -p "${project}" --env-file "${env_file}" -f "${PROJECT_DIR}/docker-compose.yaml" "$@"
     else
-        docker compose -p "${name}" -f "${PROJECT_DIR}/docker-compose.yaml" "$@"
+        docker compose -p "${project}" -f "${PROJECT_DIR}/docker-compose.yaml" "$@"
     fi
 }
 
 stop_instance() {
-    local id="$1"
-    local name="bts${id}"
+    local name="$1"
     local inst_dir="${PROJECT_DIR}/instances/${name}"
     local metadata="${inst_dir}/metadata.env"
+    local project="${name//./-}"    # dots → dashes for compose project
 
     if [ ! -d "$inst_dir" ]; then
         warn "Instance ${name} not found"
@@ -63,7 +63,7 @@ stop_instance() {
 
     if [ "$REMOVE" = true ]; then
         hdr "Removing instance ${name}..."
-        compose_cmd "${name}" "${inst_dir}" down -v --remove-orphans 2>/dev/null || true
+        compose_cmd "${project}" "${inst_dir}" down -v --remove-orphans 2>/dev/null || true
 
         # Cleanup TUN device
         if [ -n "$tun_dev" ]; then
@@ -96,24 +96,24 @@ stop_instance() {
         ok "Instance ${name} removed (containers + secondary IPs cleaned)"
     else
         hdr "Stopping instance ${name}..."
-        compose_cmd "${name}" "${inst_dir}" stop 2>/dev/null || true
+        compose_cmd "${project}" "${inst_dir}" stop 2>/dev/null || true
         ok "Instance ${name} stopped"
     fi
 }
 
 if [ "$STOP_ALL" = true ]; then
     if [ -d "${PROJECT_DIR}/instances" ]; then
-        for inst_dir in "${PROJECT_DIR}/instances"/bts*; do
+        for inst_dir in "${PROJECT_DIR}/instances"/trx-*; do
             [ -d "$inst_dir" ] || continue
-            id="${inst_dir##*bts}"
-            stop_instance "$id"
+            name="$(basename "$inst_dir")"
+            stop_instance "$name"
         done
     else
         warn "No instances directory found"
     fi
-elif [ -n "$INSTANCE_ID" ]; then
-    stop_instance "$INSTANCE_ID"
+elif [ -n "$TRX_IP" ]; then
+    stop_instance "trx-${TRX_IP}"
 else
-    err "Usage: ./scripts/stop.sh --id <number> | --all [--rm]"
+    err "Usage: ./scripts/stop.sh --trx-ip <IP> | --all [--rm]"
     exit 1
 fi

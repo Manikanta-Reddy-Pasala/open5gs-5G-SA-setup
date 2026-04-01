@@ -1,6 +1,6 @@
-# open5GS 5G SA Core - Multi-BTS Host Networking
+# open5GS 5G SA Core - Multi-TRX Host Networking
 
-A multi-instance 5G Standalone (SA) core network built from source using [open5GS](https://open5gs.org/) v2.7.5. Each BTS instance runs **all 11 NFs in a single container** with host networking — no NAT, no port mapping.
+A multi-instance 5G Standalone (SA) core network built from source using [open5GS](https://open5gs.org/) v2.7.5. Each TRX instance runs **all 11 NFs in a single container** with host networking — no NAT, no port mapping. Instances are identified by their TRX IP address.
 
 ---
 
@@ -16,28 +16,29 @@ A multi-instance 5G Standalone (SA) core network built from source using [open5G
   │  Physical NIC: eth0 (<SUBNET>)                               │
   │  + secondary IPs added per instance                          │
   │                                                              │
-  │    ┌── bts1 (single container, host network) ──────┐         │
-  │    │  10 CP NFs + UPF   AMF: <AMF_IP_1>            │         │
-  │    │  ogstun1            UPF: <UPF_IP_1>            │         │
-  │    └────────────────────────────────────────────────┘         │
+  │    ┌── trx-10.100.0.11 (single container, host net) ──┐     │
+  │    │  10 CP NFs + UPF   TRX: 10.100.0.11              │     │
+  │    │  ogstun11           UPF: 10.100.0.12              │     │
+  │    └───────────────────────────────────────────────────┘     │
   │                                                              │
-  │    ┌── bts2 (single container, host network) ──────┐         │
-  │    │  10 CP NFs + UPF   AMF: <AMF_IP_2>            │         │
-  │    │  ogstun2            UPF: <UPF_IP_2>            │         │
-  │    └────────────────────────────────────────────────┘         │
+  │    ┌── trx-10.100.0.13 (single container, host net) ──┐     │
+  │    │  10 CP NFs + UPF   TRX: 10.100.0.13              │     │
+  │    │  ogstun13           UPF: 10.100.0.14              │     │
+  │    └───────────────────────────────────────────────────┘     │
   │                                                              │
-  │  Logs: /opt/logs/cn/bts1/  /opt/logs/cn/bts2/  ...          │
+  │  Logs: /opt/logs/cn/trx-10.100.0.11/                        │
+  │        /opt/logs/cn/trx-10.100.0.13/  ...                   │
   │                                                              │
   └──────────────────────────────────────────────────────────────┘
 
   gNB connects directly to secondary IPs:
-    BTS1 gNB ──► <AMF_IP_1>:38412 (NGAP)  +  <UPF_IP_1>:2152 (GTP-U)
-    BTS2 gNB ──► <AMF_IP_2>:38412          +  <UPF_IP_2>:2152
+    TRX1 gNB ──► 10.100.0.11:38412 (NGAP)  +  10.100.0.12:2152 (GTP-U)
+    TRX2 gNB ──► 10.100.0.13:38412          +  10.100.0.14:2152
 ```
 
 ### Single-container design
 
-Each instance runs **one container** (`btsN`) with all 11 NFs:
+Each instance runs **one container** (`trx-<IP>`) with all 11 NFs:
 
 | NFs in container | Count | Role |
 |---|---|---|
@@ -52,24 +53,26 @@ Containers use `network_mode: host` — all NFs bind directly to secondary IPs a
 
 When you run:
 ```bash
-./scripts/start.sh --id 1 --amf-ip <AMF_IP> --upf-ip <UPF_IP>
+./scripts/start.sh --trx-ip 10.100.0.11 --upf-ip 10.100.0.12
 ```
 
-1. **Network detection** — auto-detects host interface from the AMF IP
-2. **Secondary IPs** — adds `<AMF_IP>` and `<UPF_IP>` to the host interface
-3. **Config templates patched** — placeholders in `config/*.yaml` get replaced:
+1. **Network detection** — auto-detects host interface from the TRX IP
+2. **Secondary IPs** — adds TRX IP and UPF IP to the host interface
+3. **Instance name** — derived from TRX IP: `trx-10.100.0.11`
+4. **TUN device** — derived from last octet: `ogstun11`
+5. **Config templates patched** — placeholders in `config/*.yaml` get replaced:
    ```
-   __CP_IP__      → <AMF_IP>       (AMF NGAP bind, all SBI binds)
-   __UPF_IP__     → <UPF_IP>       (UPF GTP-U bind, PFCP bind)
+   __CP_IP__      → 10.100.0.11    (AMF NGAP bind, all SBI binds)
+   __UPF_IP__     → 10.100.0.12    (UPF GTP-U bind, PFCP bind)
    __MONGO_HOST__ → 127.0.0.1      (localhost MongoDB)
    __UE_SUBNET__  → 10.45.0.0/16   (UE pool)
    __UE_GW__      → 10.45.0.1      (UE gateway on TUN)
-   __TUN_DEV__    → ogstunN         (unique per instance)
+   __TUN_DEV__    → ogstun11        (unique per instance)
    ```
-4. **`.env` file generated** at `instances/bts1/.env`
-5. **Log directory created** at `/opt/logs/cn/bts1/`
-6. **`docker compose up`** starts the single container
-7. **UE routing** — adds route for UE subnet via UPF IP + iptables NAT
+6. **`.env` file generated** at `instances/trx-10.100.0.11/.env`
+7. **Log directory created** at `/opt/logs/cn/trx-10.100.0.11/`
+8. **`docker compose up`** starts the single container
+9. **UE routing** — adds route for UE subnet via UPF IP + iptables NAT
 
 ---
 
@@ -80,23 +83,23 @@ When you run:
 ./scripts/build.sh
 
 # 2. Start a CN instance
-./scripts/start.sh --id 1 --amf-ip <AMF_IP> --upf-ip <UPF_IP>
+./scripts/start.sh --trx-ip 10.100.0.11 --upf-ip 10.100.0.12
 
 # 3. Provision the default test subscriber
 ./scripts/provision.sh
 
 # 4. Check status
-./scripts/status.sh --id 1
+./scripts/status.sh --trx-ip 10.100.0.11
 
 # 5. View logs
-./scripts/logs.sh --id 1 amf
+./scripts/logs.sh --trx-ip 10.100.0.11 amf
 
 # 6. Start more instances (different IPs, different UE pools)
-./scripts/start.sh --id 2 --amf-ip <AMF_IP_2> --upf-ip <UPF_IP_2> \
+./scripts/start.sh --trx-ip 10.100.0.13 --upf-ip 10.100.0.14 \
     --ue-subnet 10.46.0.0/16 --ue-gw 10.46.0.1
 
 # 7. Stop and remove
-./scripts/stop.sh --id 1 --rm
+./scripts/stop.sh --trx-ip 10.100.0.11 --rm
 ```
 
 ---
@@ -133,20 +136,20 @@ Adds secondary IPs, generates configs, starts the container.
 
 ```bash
 # Basic
-./scripts/start.sh --id 1 --amf-ip <AMF_IP> --upf-ip <UPF_IP>
+./scripts/start.sh --trx-ip <TRX_IP> --upf-ip <UPF_IP>
 
 # Custom PLMN
-./scripts/start.sh --id 1 --amf-ip <AMF_IP> --upf-ip <UPF_IP> --mcc 404 --mnc 30
+./scripts/start.sh --trx-ip <TRX_IP> --upf-ip <UPF_IP> --mcc 404 --mnc 30
 
 # Multi-PLMN
-./scripts/start.sh --id 1 --amf-ip <AMF_IP> --upf-ip <UPF_IP> \
+./scripts/start.sh --trx-ip <TRX_IP> --upf-ip <UPF_IP> \
     --plmn 404:30 --plmn 404:20 --tac 7
 
 # Debug logging
-./scripts/start.sh --id 1 --amf-ip <AMF_IP> --upf-ip <UPF_IP> --debug
+./scripts/start.sh --trx-ip <TRX_IP> --upf-ip <UPF_IP> --debug
 
 # Custom UE pool and slice
-./scripts/start.sh --id 1 --amf-ip <AMF_IP> --upf-ip <UPF_IP> \
+./scripts/start.sh --trx-ip <TRX_IP> --upf-ip <UPF_IP> \
     --ue-subnet 10.46.0.0/16 --ue-gw 10.46.0.1 --sst 1 --sd 000001
 ```
 
@@ -154,8 +157,7 @@ Adds secondary IPs, generates configs, starts the container.
 
 ```
 Required:
-  --id N          Instance number (1, 2, 3, ...)
-  --amf-ip IP     AMF/CP IP address (secondary IP on host interface)
+  --trx-ip IP     TRX/AMF/CP IP address (secondary IP on host interface)
   --upf-ip IP     UPF IP address (secondary IP on host interface)
 
 Optional — PLMN:
@@ -182,21 +184,22 @@ Optional — Other:
 
 **What start.sh does:**
 1. Auto-detects host NIC (or uses `--iface`)
-2. Adds AMF + UPF as secondary IPs on the interface
-3. Copies config templates → `instances/btsN/config/`, replaces placeholders
-4. Patches PLMN(s) into AMF config
-5. Creates log dir at `/opt/logs/cn/btsN/`
-6. Generates `.env` and runs `docker compose up -d`
-7. Waits for NRF health check (port 7777)
-8. Sets up UE traffic routing (NAT + forwarding)
+2. Derives instance name from TRX IP (e.g., `trx-10.100.0.11`)
+3. Adds TRX + UPF as secondary IPs on the interface
+4. Copies config templates → `instances/trx-<IP>/config/`, replaces placeholders
+5. Patches PLMN(s) into AMF config
+6. Creates log dir at `/opt/logs/cn/trx-<IP>/`
+7. Generates `.env` and runs `docker compose up -d`
+8. Waits for NRF health check (port 7777)
+9. Sets up UE traffic routing (NAT + forwarding)
 
 ### stop.sh — Stop / remove instances
 
 ```bash
-./scripts/stop.sh --id 1         # Stop (containers paused, config kept)
-./scripts/stop.sh --id 1 --rm    # Stop + full cleanup (container, IPs, routes, TUN, instance dir)
-./scripts/stop.sh --all           # Stop all
-./scripts/stop.sh --all --rm      # Stop + remove all
+./scripts/stop.sh --trx-ip 10.100.0.11         # Stop (container paused, config kept)
+./scripts/stop.sh --trx-ip 10.100.0.11 --rm    # Stop + full cleanup
+./scripts/stop.sh --all                          # Stop all
+./scripts/stop.sh --all --rm                     # Stop + remove all
 ```
 
 Cleanup with `--rm` removes: container, secondary IPs, UE routes, iptables rules, TUN device, instance directory.
@@ -204,15 +207,15 @@ Cleanup with `--rm` removes: container, secondary IPs, UE routes, iptables rules
 ### status.sh — Show instance status
 
 ```bash
-./scripts/status.sh              # All instances + host MongoDB
-./scripts/status.sh --id 1       # Specific instance
+./scripts/status.sh                              # All instances + host MongoDB
+./scripts/status.sh --trx-ip 10.100.0.11         # Specific instance
 ```
 
 Displays: container state + health, network info (IPs, ports), NRF registration count, subscriber count.
 
 ### provision.sh — Provision subscribers
 
-All instances share one MongoDB (`open5gs`). Provision once, all BTS instances see the same subscribers.
+All instances share one MongoDB (`open5gs`). Provision once, all TRX instances see the same subscribers.
 
 ```bash
 ./scripts/provision.sh                                    # Default test subscriber
@@ -222,13 +225,13 @@ All instances share one MongoDB (`open5gs`). Provision once, all BTS instances s
 
 ### logs.sh — Tail NF logs
 
-Logs are stored on the host at `/opt/logs/cn/btsN/`.
+Logs are stored on the host at `/opt/logs/cn/trx-<IP>/`.
 
 ```bash
-./scripts/logs.sh --id 1           # All container logs (docker compose)
-./scripts/logs.sh --id 1 amf       # AMF log: /opt/logs/cn/bts1/amf.log
-./scripts/logs.sh --id 1 upf       # UPF log: /opt/logs/cn/bts1/upf.log
-./scripts/logs.sh --id 1 nrf       # NRF log: /opt/logs/cn/bts1/nrf.log
+./scripts/logs.sh --trx-ip 10.100.0.11           # All container logs (docker compose)
+./scripts/logs.sh --trx-ip 10.100.0.11 amf       # AMF log
+./scripts/logs.sh --trx-ip 10.100.0.11 upf       # UPF log
+./scripts/logs.sh --trx-ip 10.100.0.11 nrf       # NRF log
 ```
 
 Available NFs: `amf`, `smf`, `nrf`, `scp`, `ausf`, `udm`, `udr`, `pcf`, `nssf`, `bsf`, `upf`
@@ -237,31 +240,31 @@ Available NFs: `amf`, `smf`, `nrf`, `scp`, `ausf`, `udm`, `udr`, `pcf`, `nssf`, 
 
 ## NF Ports
 
-All NFs bind to the AMF IP (`--amf-ip`), except UPF which binds to `--upf-ip`.
+All NFs bind to the TRX IP (`--trx-ip`), except UPF which binds to `--upf-ip`.
 
 | NF | SBI Port | Other Ports | Bind IP |
 |---|---|---|---|
-| NRF | 7777 | | AMF IP |
-| SCP | 7778 | | AMF IP |
-| AMF | 7780 | 38412/SCTP (NGAP) | AMF IP |
-| SMF | 7781 | 8805/UDP (PFCP client) | AMF IP |
-| PCF | 7782 | | AMF IP |
-| NSSF | 7783 | | AMF IP |
-| AUSF | 7784 | | AMF IP |
-| UDM | 7785 | | AMF IP |
-| UDR | 7786 | | AMF IP |
-| BSF | 7787 | | AMF IP |
+| NRF | 7777 | | TRX IP |
+| SCP | 7778 | | TRX IP |
+| AMF | 7780 | 38412/SCTP (NGAP) | TRX IP |
+| SMF | 7781 | 8805/UDP (PFCP client) | TRX IP |
+| PCF | 7782 | | TRX IP |
+| NSSF | 7783 | | TRX IP |
+| AUSF | 7784 | | TRX IP |
+| UDM | 7785 | | TRX IP |
+| UDR | 7786 | | TRX IP |
+| BSF | 7787 | | TRX IP |
 | UPF | | 2152/UDP (GTP-U), 8805/UDP (PFCP server) | UPF IP |
 
 ---
 
 ## Logs
 
-Each instance writes per-NF log files to `/opt/logs/cn/btsN/`:
+Each instance writes per-NF log files to `/opt/logs/cn/trx-<IP>/`:
 
 ```
 /opt/logs/cn/
-├── bts1/
+├── trx-10.100.0.11/
 │   ├── amf.log
 │   ├── smf.log
 │   ├── upf.log
@@ -273,7 +276,7 @@ Each instance writes per-NF log files to `/opt/logs/cn/btsN/`:
 │   ├── pcf.log
 │   ├── nssf.log
 │   └── bsf.log
-├── bts2/
+├── trx-10.100.0.13/
 │   └── ...
 ```
 
@@ -330,7 +333,7 @@ open5gs-5G-SA-setup/
 │   ├── env.sh                # Shared env vars and helpers
 │   ├── build.sh              # Source compilation + image build
 │   ├── docker.sh             # Runtime image build (standalone)
-│   ├── start.sh              # Start CN instance
+│   ├── start.sh              # Start CN instance (--trx-ip <IP>)
 │   ├── stop.sh               # Stop/remove CN instance
 │   ├── status.sh             # Instance status
 │   ├── provision.sh          # Subscriber provisioning
@@ -345,13 +348,13 @@ open5gs-5G-SA-setup/
 ├── tests/                    # Test suite
 ├── build-output/             # Generated by build (git-ignored)
 └── instances/                # Generated at runtime (git-ignored)
-    └── btsN/
+    └── trx-<IP>/
         ├── .env              # Docker compose env vars
         ├── config/           # Patched NF configs + entrypoint
         └── metadata.env      # Instance metadata (IPs, PLMN, etc.)
 
 /opt/logs/cn/                 # NF logs (host path, mounted into containers)
-└── btsN/
+└── trx-<IP>/
     ├── amf.log, smf.log, upf.log, nrf.log, ...
 ```
 
@@ -381,7 +384,7 @@ Set env vars in `docker-compose.yaml` (under `core.environment`):
 
 | Env var | Default | Description |
 |---|---|---|
-| `AMF_TCP_BIND_ADDR` | AMF IP | Health server bind address |
+| `AMF_TCP_BIND_ADDR` | TRX IP | Health server bind address |
 | `AMF_TCP_PORT` | `50051` | Health server port |
 | `AMF_CNODE_ENABLE` | `1` | Enable cnode client |
 | `AMF_CNODE_SERVER_IP` | _(unset)_ | cnode server IP (required to activate) |
@@ -401,7 +404,7 @@ python3 tests/cnode_mock_server.py --port 9090 [--framing le4|varint|auto]
 - MongoDB running on host (port 27017)
 - Linux host with a network interface that has a real subnet (not /32)
 - SCTP kernel module (`modprobe sctp`)
-- Available IP addresses on the host's LAN for AMF + UPF per instance
+- Available IP addresses on the host's LAN for TRX + UPF per instance
 - Python 3 with PyYAML (`pip install pyyaml`)
 
 ---
@@ -415,23 +418,23 @@ python3 tests/cnode_mock_server.py --port 9090 [--framing le4|varint|auto]
 mongosh --eval "db.runCommand({ping:1})"
 
 # Check container logs
-./scripts/logs.sh --id 1
+./scripts/logs.sh --trx-ip 10.100.0.11
 
 # Check NRF
-curl -s --http2-prior-knowledge http://<AMF_IP>:7777/nnrf-nfm/v1/nf-instances
+curl -s --http2-prior-knowledge http://10.100.0.11:7777/nnrf-nfm/v1/nf-instances
 ```
 
 ### gNB cannot reach AMF
 
 ```bash
 # Verify secondary IPs are on the interface
-ip addr show | grep <AMF_IP>
+ip addr show | grep 10.100.0.11
 
 # Verify AMF is listening on NGAP
-docker exec bts1 ss -lnp | grep 38412
+docker exec trx-10.100.0.11 ss -lnp | grep 38412
 
 # Verify reachability
-ping <AMF_IP>
+ping 10.100.0.11
 ```
 
 ### Cleaning up stale state
@@ -441,6 +444,6 @@ ping <AMF_IP>
 ./scripts/stop.sh --all --rm
 
 # Manual cleanup if needed
-ip addr del <AMF_IP>/24 dev eth0
-ip addr del <UPF_IP>/24 dev eth0
+ip addr del 10.100.0.11/24 dev eth0
+ip addr del 10.100.0.12/24 dev eth0
 ```

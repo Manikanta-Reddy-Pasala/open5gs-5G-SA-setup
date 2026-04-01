@@ -107,5 +107,5 @@ total=$(mongosh "mongodb://localhost:27017/${DB_NAME}" --quiet \
     --eval "db.subscribers.countDocuments()" 2>/dev/null | tail -1)
 
 hdr ""
-ok "Provisioning complete. Total subscribers in ${DB_NAME}: ${total} (shared across all BTS instances)"
+ok "Provisioning complete. Total subscribers in ${DB_NAME}: ${total} (shared across all TRX instances)"
 hdr ""

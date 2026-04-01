@@ -1,15 +1,15 @@
 #!/bin/bash
 # ============================================================
-# start.sh — Start a CN (Core Network) instance for a BTS
+# start.sh — Start a CN (Core Network) instance for a TRX
 # ============================================================
 # Usage:
-#   ./scripts/start.sh --id 1 --amf-ip <AMF_IP> --upf-ip <UPF_IP>
-#   ./scripts/start.sh --id 2 --amf-ip <AMF_IP> --upf-ip <UPF_IP> --mcc 404 --mnc 30
-#   ./scripts/start.sh --id 1 --amf-ip <AMF_IP> --upf-ip <UPF_IP> --plmn 404:30 --plmn 404:20
-#   ./scripts/start.sh --id 1 --amf-ip <AMF_IP> --upf-ip <UPF_IP> --debug
+#   ./scripts/start.sh --trx-ip <IP> --upf-ip <IP>
+#   ./scripts/start.sh --trx-ip <IP> --upf-ip <IP> --mcc 404 --mnc 30
+#   ./scripts/start.sh --trx-ip <IP> --upf-ip <IP> --plmn 404:30 --plmn 404:20
+#   ./scripts/start.sh --trx-ip <IP> --upf-ip <IP> --debug
 #
-# Host networking: AMF_IP and UPF_IP are added as secondary IPs
-# on the host interface. Containers use network_mode: host.
+# Host networking: TRX_IP (=AMF) and UPF_IP are added as secondary IPs
+# on the host interface. Container uses network_mode: host.
 # ============================================================
 
 set -uo pipefail
@@ -17,8 +17,7 @@ source "$(dirname "$0")/env.sh"
 cd "$PROJECT_DIR"
 
 # ── Parse arguments ──────────────────────────────────────────
-INSTANCE_ID=""
-AMF_IP=""
+TRX_IP=""
 UPF_IP=""
 IFACE_OVERRIDE=""
 MCC="$DEFAULT_MCC"
@@ -35,8 +34,7 @@ MCC_MNC_SET=false   # Track if --mcc/--mnc was used
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --id)        INSTANCE_ID="$2"; shift ;;
-        --amf-ip)    AMF_IP="$2"; shift ;;
+        --trx-ip)    TRX_IP="$2"; shift ;;
         --upf-ip)    UPF_IP="$2"; shift ;;
         --iface)     IFACE_OVERRIDE="$2"; shift ;;
         --mcc)       MCC="$2"; MCC_MNC_SET=true; shift ;;
@@ -59,12 +57,11 @@ if [ ${#PLMN_LIST[@]} -eq 0 ]; then
     PLMN_LIST=("${MCC}:${MNC}")
 fi
 
-if [ -z "$INSTANCE_ID" ] || [ -z "$AMF_IP" ] || [ -z "$UPF_IP" ]; then
-    err "Usage: ./scripts/start.sh --id <N> --amf-ip <IP> --upf-ip <IP> [options]"
+if [ -z "$TRX_IP" ] || [ -z "$UPF_IP" ]; then
+    err "Usage: ./scripts/start.sh --trx-ip <IP> --upf-ip <IP> [options]"
     err ""
     err "Required:"
-    err "  --id N          Instance number (1, 2, 3, ...)"
-    err "  --amf-ip IP     AMF/CP IP address (on host network)"
+    err "  --trx-ip IP     TRX/AMF/CP IP address (on host network)"
     err "  --upf-ip IP     UPF IP address (on host network)"
     err ""
     err "Optional:"
@@ -77,10 +74,21 @@ if [ -z "$INSTANCE_ID" ] || [ -z "$AMF_IP" ] || [ -z "$UPF_IP" ]; then
     err "  --dnn D         DNN (default: ${DEFAULT_DNN})"
     err "  --ue-subnet X   UE pool subnet (default: ${DEFAULT_UE_SUBNET})"
     err "  --ue-gw X       UE pool gateway (default: ${DEFAULT_UE_GW})"
-    err "  --iface NAME    Force network interface (default: auto-detect from AMF IP)"
+    err "  --iface NAME    Force network interface (default: auto-detect from TRX IP)"
     err "  --debug         Enable debug logging"
     exit 1
 fi
+
+# TRX IP is the AMF/CP IP
+AMF_IP="$TRX_IP"
+
+# Derive instance name and compose project from TRX IP
+INSTANCE_NAME="trx-${TRX_IP}"
+COMPOSE_PROJECT="${INSTANCE_NAME//./-}"    # dots → dashes for compose project
+
+# Derive unique TUN device from last octet of TRX IP
+TUN_SUFFIX="${TRX_IP##*.}"
+TUN_DEV="ogstun${TUN_SUFFIX}"
 
 # ── Auto-detect network config ────────────────────────────────
 if [ -n "$IFACE_OVERRIDE" ]; then
@@ -106,12 +114,12 @@ else
 fi
 
 if [ -z "$PARENT_IFACE" ]; then
-    err "Cannot determine network interface for AMF IP ${AMF_IP}"
+    err "Cannot determine network interface for TRX IP ${TRX_IP}"
     err "Available interfaces:"
     ip -4 -br addr show | while read -r line; do err "  $line"; done
     err ""
     err "Use --iface <name> to specify manually, e.g.:"
-    err "  ./scripts/start.sh --id 1 --amf-ip ${AMF_IP} --upf-ip ${UPF_IP} --iface enp1s0"
+    err "  ./scripts/start.sh --trx-ip ${TRX_IP} --upf-ip ${UPF_IP} --iface enp1s0"
     exit 1
 fi
 
@@ -131,8 +139,6 @@ HOST_PREFIX=$(ip -4 addr show "$PARENT_IFACE" | awk '/inet / {split($2,a,"/"); p
 # MongoDB — with host networking, containers reach it directly via localhost
 MONGO_IP="127.0.0.1"
 DB_NAME="open5gs"
-INSTANCE_NAME="bts${INSTANCE_ID}"
-COMPOSE_PROJECT="bts${INSTANCE_ID}"
 
 LOG_LEVEL="info"
 [ "$DEBUG_MODE" = true ] && LOG_LEVEL="debug"
@@ -141,15 +147,12 @@ LOG_LEVEL="info"
 PFCP_CP_IP="$AMF_IP"
 PFCP_UPF_IP="$UPF_IP"
 
-# Unique TUN device per instance (ogstun1, ogstun2, ...)
-TUN_DEV="ogstun${INSTANCE_ID}"
-
 PLMN_DISPLAY=$(IFS=', '; echo "${PLMN_LIST[*]}")
 
 hdr ""
 hdr "  Starting CN Instance: ${INSTANCE_NAME}"
 hdr "  ─────────────────────────────────"
-log "  AMF IP:     ${AMF_IP}  (NGAP:${NGAP_PORT})"
+log "  TRX IP:     ${TRX_IP}  (NGAP:${NGAP_PORT})"
 log "  UPF IP:     ${UPF_IP}  (GTP-U:${GTPU_PORT})"
 log "  Interface:  ${PARENT_IFACE}  (subnet: ${HOST_SUBNET}, mode: host)"
 log "  Host IP:    ${HOST_IP}"
@@ -292,7 +295,7 @@ iptables -C FORWARD -d "${UE_SUBNET}" -j ACCEPT 2>/dev/null || \
 
 # ── Save instance metadata ────────────────────────────────────
 cat > "${INST_DIR}/metadata.env" <<METAEOF
-INSTANCE_ID=${INSTANCE_ID}
+TRX_IP=${TRX_IP}
 AMF_IP=${AMF_IP}
 UPF_IP=${UPF_IP}
 LOG_DIR=${LOG_DIR}
@@ -328,7 +331,7 @@ log "  UE:     ${UE_SUBNET}"
 log "  DB:     mongodb://${MONGO_IP}/${DB_NAME}"
 hdr ""
 log "  Provision: ./scripts/provision.sh [--count N]"
-log "  Status:    ./scripts/status.sh [--id ${INSTANCE_ID}]"
-log "  Logs:      ./scripts/logs.sh --id ${INSTANCE_ID} [nf]"
-log "  Stop:      ./scripts/stop.sh --id ${INSTANCE_ID}"
+log "  Status:    ./scripts/status.sh [--trx-ip ${TRX_IP}]"
+log "  Logs:      ./scripts/logs.sh --trx-ip ${TRX_IP} [nf]"
+log "  Stop:      ./scripts/stop.sh --trx-ip ${TRX_IP}"
 hdr ""

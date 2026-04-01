@@ -3,27 +3,26 @@
 # status.sh — Show status of CN instances
 # ============================================================
 # Usage:
-#   ./scripts/status.sh              # Show all instances
-#   ./scripts/status.sh --id 1       # Show specific instance
+#   ./scripts/status.sh                       # Show all instances
+#   ./scripts/status.sh --trx-ip 10.100.0.11  # Show specific instance
 # ============================================================
 
 set -uo pipefail
 source "$(dirname "$0")/env.sh"
 cd "$PROJECT_DIR"
 
-INSTANCE_ID=""
+TRX_IP=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --id) INSTANCE_ID="$2"; shift ;;
+        --trx-ip) TRX_IP="$2"; shift ;;
         *) err "Unknown option: $1"; exit 1 ;;
     esac
     shift
 done
 
 show_instance() {
-    local id="$1"
-    local name="bts${id}"
+    local name="$1"
     local inst_dir="${PROJECT_DIR}/instances/${name}"
     local metadata="${inst_dir}/metadata.env"
 
@@ -60,7 +59,7 @@ show_instance() {
 
     echo ""
     echo "${BOLD}Network (host on ${parent_iface}):${NC}"
-    log "  AMF/NGAP:  ${amf_ip}:${NGAP_PORT}"
+    log "  TRX/NGAP:  ${amf_ip}:${NGAP_PORT}"
     log "  UPF/GTPU:  ${upf_ip}:${GTPU_PORT}"
     log "  UE Pool:   ${ue_subnet}"
 
@@ -103,7 +102,7 @@ except:
 # ── Main ─────────────────────────────────────────────────────
 hdr ""
 hdr "  ========================================="
-hdr "  open5GS Multi-BTS Status"
+hdr "  open5GS Multi-TRX Status"
 hdr "  ========================================="
 
 # MongoDB host status
@@ -117,18 +116,18 @@ else
     err "MongoDB NOT running on host!"
 fi
 
-if [ -n "$INSTANCE_ID" ]; then
-    show_instance "$INSTANCE_ID"
+if [ -n "$TRX_IP" ]; then
+    show_instance "trx-${TRX_IP}"
 else
     # Show all instances
     if [ -d "${PROJECT_DIR}/instances" ]; then
-        for inst_dir in "${PROJECT_DIR}/instances"/bts*; do
+        for inst_dir in "${PROJECT_DIR}/instances"/trx-*; do
             [ -d "$inst_dir" ] || continue
-            id="${inst_dir##*bts}"
-            show_instance "$id"
+            name="$(basename "$inst_dir")"
+            show_instance "$name"
         done
     else
-        log "No instances running. Start one: ./scripts/start.sh --id 1 --amf-ip <IP> --upf-ip <IP>"
+        log "No instances running. Start one: ./scripts/start.sh --trx-ip <IP> --upf-ip <IP>"
     fi
 fi
 
