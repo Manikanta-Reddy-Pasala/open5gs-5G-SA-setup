@@ -162,7 +162,8 @@ hdr ""
 # ── Generate instance config ─────────────────────────────────
 INST_DIR="${PROJECT_DIR}/instances/${INSTANCE_NAME}"
 INST_CONFIG="${INST_DIR}/config"
-mkdir -p "${INST_CONFIG}" "${INST_DIR}/logs"
+LOG_DIR="/opt/logs/cn/${INSTANCE_NAME}"
+mkdir -p "${INST_CONFIG}" "${LOG_DIR}"
 
 # Copy base configs and replace all placeholders in one pass
 for f in nrf.yaml scp.yaml amf.yaml smf.yaml upf.yaml ausf.yaml udm.yaml udr.yaml pcf.yaml nssf.yaml bsf.yaml; do
@@ -264,6 +265,7 @@ INSTANCE_NAME=${INSTANCE_NAME}
 IMAGE=${IMAGE}
 INST_CONFIG=${INST_CONFIG}
 INST_DIR=${INST_DIR}
+LOG_DIR=${LOG_DIR}
 AMF_IP=${AMF_IP}
 UPF_IP=${UPF_IP}
 MONGO_IP=${MONGO_IP}
@@ -293,6 +295,7 @@ cat > "${INST_DIR}/metadata.env" <<METAEOF
 INSTANCE_ID=${INSTANCE_ID}
 AMF_IP=${AMF_IP}
 UPF_IP=${UPF_IP}
+LOG_DIR=${LOG_DIR}
 PARENT_IFACE=${PARENT_IFACE}
 HOST_PREFIX=${HOST_PREFIX}
 HOST_IP=${HOST_IP}

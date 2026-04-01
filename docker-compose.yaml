@@ -29,7 +29,7 @@ services:
       - ${INST_CONFIG}/nssf.yaml:/etc/open5gs/nssf.yaml
       - ${INST_CONFIG}/bsf.yaml:/etc/open5gs/bsf.yaml
       - ${INST_CONFIG}/upf.yaml:/etc/open5gs/upf.yaml
-      - ${INST_DIR}/logs:/var/log/open5gs
+      - ${LOG_DIR}:/var/log/open5gs
     environment:
       DB_URI: mongodb://${MONGO_IP}/${DB_NAME}
       CP_IP: ${AMF_IP}

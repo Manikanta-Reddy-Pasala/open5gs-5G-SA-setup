@@ -20,11 +20,11 @@ if [ "$quick" = false ]; then
     hdr "  This compiles C code inside Docker (~20 minutes first run)"
     hdr ""
 
-    log "Step 1/2: Building open5GS from source..."
+    log "Step 1/3: Building open5GS from source..."
     docker build -f Dockerfile.build -t "open5gs-builder:${OPEN5GS_VERSION}" .
 
     log "Source build complete."
-    log "Step 2/2: Extracting built binaries to build-output/..."
+    log "Step 2/3: Extracting built binaries to build-output/..."
     rm -rf build-output
     mkdir -p build-output
 
@@ -49,7 +49,14 @@ else
 fi
 
 hdr ""
-ok "BUILD COMPLETE"
+log "Step 3/3: Building unified runtime image (${IMAGE})..."
+docker build -f Dockerfile.all -t "${IMAGE}" .
+
 hdr ""
-log "Next: ./scripts/docker.sh   (to build runtime Docker images)"
+ok "BUILD COMPLETE — Image: ${IMAGE}"
+hdr ""
+log "Runtime image:"
+docker images --format "  {{.Repository}}:{{.Tag}} ({{.Size}})" | grep "open5gs" || true
+hdr ""
+log "Next: ./scripts/start.sh --id 1 --amf-ip <IP> --upf-ip <IP>"
 hdr ""

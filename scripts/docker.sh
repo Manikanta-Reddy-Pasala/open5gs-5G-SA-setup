@@ -1,9 +1,9 @@
 #!/bin/bash
 # ============================================================
-# docker.sh — Build runtime Docker images for open5GS
+# docker.sh — Build unified runtime Docker image for open5GS
 # ============================================================
 # Usage:
-#   ./scripts/docker.sh             # Build CP + UPF images
+#   ./scripts/docker.sh             # Build unified image (CP + UPF)
 # ============================================================
 
 set -uo pipefail
@@ -16,22 +16,17 @@ if [ ! -d "build-output/open5gs" ]; then
 fi
 
 hdr ""
-hdr "  Building runtime Docker images"
+hdr "  Building unified runtime Docker image"
 hdr ""
 
-mkdir -p logs
-
-log "Building CP image (${IMAGE_CP})..."
-docker build -f Dockerfile.cp -t "${IMAGE_CP}" .
-
-log "Building UPF image (${IMAGE_UPF})..."
-docker build -f Dockerfile.upf -t "${IMAGE_UPF}" .
+log "Building ${IMAGE} (all 11 NFs: 10 CP + UPF)..."
+docker build -f Dockerfile.all -t "${IMAGE}" .
 
 hdr ""
-ok "DOCKER IMAGES BUILT"
+ok "DOCKER IMAGE BUILT"
 hdr ""
-log "Runtime images:"
-docker images --format "  {{.Repository}}:{{.Tag}} ({{.Size}})" | grep -E "open5gs-(cp|upf)" || true
+log "Runtime image:"
+docker images --format "  {{.Repository}}:{{.Tag}} ({{.Size}})" | grep "open5gs" || true
 hdr ""
 log "Next: ./scripts/start.sh --id 1 --amf-ip <IP> --upf-ip <IP>"
 hdr ""

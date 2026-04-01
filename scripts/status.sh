@@ -45,23 +45,21 @@ show_instance() {
     hdr "  ═══ Instance: ${name} ═══"
     hdr ""
 
-    echo "${BOLD}Containers:${NC}"
+    echo "${BOLD}Container:${NC}"
     local all_ok=true
-    for cname in "${name}-cp" "${name}-upf"; do
-        local state
-        state=$(docker inspect --format='{{.State.Status}}' "$cname" 2>/dev/null || echo "not found")
-        local health=""
-        health=$(docker inspect --format='{{if .State.Health}} ({{.State.Health.Status}}){{end}}' "$cname" 2>/dev/null || true)
-        if [ "$state" = "running" ]; then
-            printf "  ${GREEN}✓${NC} %-25s %s%s\n" "$cname" "$state" "$health"
-        else
-            printf "  ${RED}✗${NC} %-25s %s\n" "$cname" "$state"
-            all_ok=false
-        fi
-    done
+    local state
+    state=$(docker inspect --format='{{.State.Status}}' "${name}" 2>/dev/null || echo "not found")
+    local health=""
+    health=$(docker inspect --format='{{if .State.Health}} ({{.State.Health.Status}}){{end}}' "${name}" 2>/dev/null || true)
+    if [ "$state" = "running" ]; then
+        printf "  ${GREEN}✓${NC} %-25s %s%s\n" "${name}" "$state" "$health"
+    else
+        printf "  ${RED}✗${NC} %-25s %s\n" "${name}" "$state"
+        all_ok=false
+    fi
 
     echo ""
-    echo "${BOLD}Network (macvlan on ${parent_iface}):${NC}"
+    echo "${BOLD}Network (host on ${parent_iface}):${NC}"
     log "  AMF/NGAP:  ${amf_ip}:${NGAP_PORT}"
     log "  UPF/GTPU:  ${upf_ip}:${GTPU_PORT}"
     log "  UE Pool:   ${ue_subnet}"
