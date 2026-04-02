@@ -23,7 +23,6 @@ DNN="$DEFAULT_DNN"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --id)    shift ;; # accepted but ignored (single shared DB)
         --count) COUNT="$2"; shift ;;
         --imsi)  IMSI="$2"; shift ;;
         --k)     K="$2"; shift ;;

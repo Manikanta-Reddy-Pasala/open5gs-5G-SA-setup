@@ -58,5 +58,5 @@ hdr ""
 log "Runtime image:"
 docker images --format "  {{.Repository}}:{{.Tag}} ({{.Size}})" | grep "open5gs" || true
 hdr ""
-log "Next: ./scripts/start.sh --trx-ip <IP> --upf-ip <IP>"
+log "Next: ./scripts/start.sh --lm-ip <LM_IP> --trx-ip <TRX_IP> --ng-ip <NG_IP>"
 hdr ""

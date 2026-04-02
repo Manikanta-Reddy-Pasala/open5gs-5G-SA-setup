@@ -14,17 +14,18 @@ A multi-instance 5G Standalone (SA) core network built from source using [open5G
   │  127.0.0.1:27017                                             │
   │                                                              │
   │  Physical NIC: eth0 (<SUBNET>)                               │
+  │  LM IP: <LM_IP> (existing management IP on host)            │
   │  + secondary IPs added per instance                          │
   │                                                              │
-  │    ┌── trx-10.100.0.11 (single container, host net) ──┐     │
-  │    │  10 CP NFs + UPF   TRX: 10.100.0.11              │     │
-  │    │  ogstun11           UPF: 10.100.0.12              │     │
-  │    └───────────────────────────────────────────────────┘     │
+  │    ┌── open5gs_10.100.0.11 (single container, host net) ─┐  │
+  │    │  10 CP NFs + UPF   TRX: 10.100.0.11                 │  │
+  │    │  ogstun11           NG:  10.100.0.12                 │  │
+  │    └──────────────────────────────────────────────────────┘  │
   │                                                              │
-  │    ┌── trx-10.100.0.13 (single container, host net) ──┐     │
-  │    │  10 CP NFs + UPF   TRX: 10.100.0.13              │     │
-  │    │  ogstun13           UPF: 10.100.0.14              │     │
-  │    └───────────────────────────────────────────────────┘     │
+  │    ┌── open5gs_10.100.0.13 (single container, host net) ─┐  │
+  │    │  10 CP NFs + UPF   TRX: 10.100.0.13                 │  │
+  │    │  ogstun13           NG:  10.100.0.14                 │  │
+  │    └──────────────────────────────────────────────────────┘  │
   │                                                              │
   │  Logs: /opt/logs/cn/trx-10.100.0.11/                        │
   │        /opt/logs/cn/trx-10.100.0.13/  ...                   │
@@ -38,7 +39,7 @@ A multi-instance 5G Standalone (SA) core network built from source using [open5G
 
 ### Single-container design
 
-Each instance runs **one container** (`trx-<IP>`) with all 11 NFs:
+Each instance runs **one container** (`open5gs_<TRX_IP>`) with all 11 NFs:
 
 | NFs in container | Count | Role |
 |---|---|---|
@@ -53,14 +54,15 @@ Containers use `network_mode: host` — all NFs bind directly to secondary IPs a
 
 When you run:
 ```bash
-./scripts/start.sh --trx-ip 10.100.0.11 --upf-ip 10.100.0.12
+./scripts/start.sh --lm-ip 192.168.1.100 --trx-ip 10.100.0.11 --ng-ip 10.100.0.12
 ```
 
-1. **Network detection** — auto-detects host interface from the TRX IP
-2. **Secondary IPs** — adds TRX IP and UPF IP to the host interface
+1. **Interface detection** — finds host NIC using `--lm-ip` (existing IP on host)
+2. **Secondary IPs** — adds TRX IP and NG IP to the detected interface
 3. **Instance name** — derived from TRX IP: `trx-10.100.0.11`
-4. **TUN device** — derived from last octet: `ogstun11`
-5. **Config templates patched** — placeholders in `config/*.yaml` get replaced:
+4. **Container name** — `open5gs_10.100.0.11`
+5. **TUN device** — derived from last octet: `ogstun11`
+6. **Config templates patched** — placeholders in `config/*.yaml` get replaced:
    ```
    __CP_IP__      → 10.100.0.11    (AMF NGAP bind, all SBI binds)
    __UPF_IP__     → 10.100.0.12    (UPF GTP-U bind, PFCP bind)
@@ -69,10 +71,10 @@ When you run:
    __UE_GW__      → 10.45.0.1      (UE gateway on TUN)
    __TUN_DEV__    → ogstun11        (unique per instance)
    ```
-6. **`.env` file generated** at `instances/trx-10.100.0.11/.env`
-7. **Log directory created** at `/opt/logs/cn/trx-10.100.0.11/`
-8. **`docker compose up`** starts the single container
-9. **UE routing** — adds route for UE subnet via UPF IP + iptables NAT
+7. **`.env` file generated** at `instances/trx-10.100.0.11/.env`
+8. **Log directory created** at `/opt/logs/cn/trx-10.100.0.11/`
+9. **`docker compose up`** starts the single container
+10. **UE routing** — adds route for UE subnet via NG IP + iptables NAT
 
 ---
 
@@ -83,7 +85,7 @@ When you run:
 ./scripts/build.sh
 
 # 2. Start a CN instance
-./scripts/start.sh --trx-ip 10.100.0.11 --upf-ip 10.100.0.12
+./scripts/start.sh --lm-ip 192.168.1.100 --trx-ip 10.100.0.11 --ng-ip 10.100.0.12
 
 # 3. Provision the default test subscriber
 ./scripts/provision.sh
@@ -95,7 +97,7 @@ When you run:
 ./scripts/logs.sh --trx-ip 10.100.0.11 amf
 
 # 6. Start more instances (different IPs, different UE pools)
-./scripts/start.sh --trx-ip 10.100.0.13 --upf-ip 10.100.0.14 \
+./scripts/start.sh --lm-ip 192.168.1.100 --trx-ip 10.100.0.13 --ng-ip 10.100.0.14 \
     --ue-subnet 10.46.0.0/16 --ue-gw 10.46.0.1
 
 # 7. Stop and remove
@@ -136,20 +138,20 @@ Adds secondary IPs, generates configs, starts the container.
 
 ```bash
 # Basic
-./scripts/start.sh --trx-ip <TRX_IP> --upf-ip <UPF_IP>
+./scripts/start.sh --lm-ip <LM_IP> --trx-ip <TRX_IP> --ng-ip <NG_IP>
 
 # Custom PLMN
-./scripts/start.sh --trx-ip <TRX_IP> --upf-ip <UPF_IP> --mcc 404 --mnc 30
+./scripts/start.sh --lm-ip <LM_IP> --trx-ip <TRX_IP> --ng-ip <NG_IP> --mcc 404 --mnc 30
 
 # Multi-PLMN
-./scripts/start.sh --trx-ip <TRX_IP> --upf-ip <UPF_IP> \
+./scripts/start.sh --lm-ip <LM_IP> --trx-ip <TRX_IP> --ng-ip <NG_IP> \
     --plmn 404:30 --plmn 404:20 --tac 7
 
 # Debug logging
-./scripts/start.sh --trx-ip <TRX_IP> --upf-ip <UPF_IP> --debug
+./scripts/start.sh --lm-ip <LM_IP> --trx-ip <TRX_IP> --ng-ip <NG_IP> --debug
 
 # Custom UE pool and slice
-./scripts/start.sh --trx-ip <TRX_IP> --upf-ip <UPF_IP> \
+./scripts/start.sh --lm-ip <LM_IP> --trx-ip <TRX_IP> --ng-ip <NG_IP> \
     --ue-subnet 10.46.0.0/16 --ue-gw 10.46.0.1 --sst 1 --sd 000001
 ```
 
@@ -157,8 +159,9 @@ Adds secondary IPs, generates configs, starts the container.
 
 ```
 Required:
-  --trx-ip IP     TRX/AMF/CP IP address (secondary IP on host interface)
-  --upf-ip IP     UPF IP address (secondary IP on host interface)
+  --lm-ip IP      LAN Management IP (existing IP on host, used to detect interface)
+  --trx-ip IP     TRX/CP IP address (added as secondary IP on host interface)
+  --ng-ip IP      NG interface IP for UPF (added as secondary IP on host interface)
 
 Optional — PLMN:
   --mcc X         MCC (default: 001)
@@ -176,22 +179,23 @@ Optional — UE pool:
   --ue-gw X       UE gateway (default: 10.45.0.1)
 
 Optional — Network:
-  --iface NAME    Force network interface (default: auto-detect)
+  --iface NAME    Force network interface (default: auto-detect from LM IP)
 
 Optional — Other:
   --debug         Enable debug logging for all NFs
 ```
 
 **What start.sh does:**
-1. Auto-detects host NIC (or uses `--iface`)
+1. Detects host NIC from LM IP (or uses `--iface`)
 2. Derives instance name from TRX IP (e.g., `trx-10.100.0.11`)
-3. Adds TRX + UPF as secondary IPs on the interface
-4. Copies config templates → `instances/trx-<IP>/config/`, replaces placeholders
-5. Patches PLMN(s) into AMF config
-6. Creates log dir at `/opt/logs/cn/trx-<IP>/`
-7. Generates `.env` and runs `docker compose up -d`
-8. Waits for NRF health check (port 7777)
-9. Sets up UE traffic routing (NAT + forwarding)
+3. Container name: `open5gs_<TRX_IP>` (e.g., `open5gs_10.100.0.11`)
+4. Adds TRX + NG as secondary IPs on the interface
+5. Copies config templates → `instances/trx-<IP>/config/`, replaces placeholders
+6. Patches PLMN(s) into AMF config
+7. Creates log dir at `/opt/logs/cn/trx-<IP>/`
+8. Generates `.env` and runs `docker compose up -d`
+9. Waits for NRF health check (port 7777)
+10. Sets up UE traffic routing (NAT + forwarding)
 
 ### stop.sh — Stop / remove instances
 
@@ -240,7 +244,7 @@ Available NFs: `amf`, `smf`, `nrf`, `scp`, `ausf`, `udm`, `udr`, `pcf`, `nssf`, 
 
 ## NF Ports
 
-All NFs bind to the TRX IP (`--trx-ip`), except UPF which binds to `--upf-ip`.
+All NFs bind to the TRX IP (`--trx-ip`), except UPF which binds to `--ng-ip`.
 
 | NF | SBI Port | Other Ports | Bind IP |
 |---|---|---|---|
@@ -254,7 +258,7 @@ All NFs bind to the TRX IP (`--trx-ip`), except UPF which binds to `--upf-ip`.
 | UDM | 7785 | | TRX IP |
 | UDR | 7786 | | TRX IP |
 | BSF | 7787 | | TRX IP |
-| UPF | | 2152/UDP (GTP-U), 8805/UDP (PFCP server) | UPF IP |
+| UPF | | 2152/UDP (GTP-U), 8805/UDP (PFCP server) | NG IP |
 
 ---
 
@@ -333,7 +337,7 @@ open5gs-5G-SA-setup/
 │   ├── env.sh                # Shared env vars and helpers
 │   ├── build.sh              # Source compilation + image build
 │   ├── docker.sh             # Runtime image build (standalone)
-│   ├── start.sh              # Start CN instance (--trx-ip <IP>)
+│   ├── start.sh              # Start CN instance (--lm-ip, --trx-ip, --ng-ip)
 │   ├── stop.sh               # Stop/remove CN instance
 │   ├── status.sh             # Instance status
 │   ├── provision.sh          # Subscriber provisioning
@@ -404,7 +408,7 @@ python3 tests/cnode_mock_server.py --port 9090 [--framing le4|varint|auto]
 - MongoDB running on host (port 27017)
 - Linux host with a network interface that has a real subnet (not /32)
 - SCTP kernel module (`modprobe sctp`)
-- Available IP addresses on the host's LAN for TRX + UPF per instance
+- Available IP addresses on the host's LAN for TRX + NG per instance
 - Python 3 with PyYAML (`pip install pyyaml`)
 
 ---
@@ -431,7 +435,7 @@ curl -s --http2-prior-knowledge http://10.100.0.11:7777/nnrf-nfm/v1/nf-instances
 ip addr show | grep 10.100.0.11
 
 # Verify AMF is listening on NGAP
-docker exec trx-10.100.0.11 ss -lnp | grep 38412
+docker exec open5gs_10.100.0.11 ss -lnp | grep 38412
 
 # Verify reachability
 ping 10.100.0.11

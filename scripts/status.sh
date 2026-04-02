@@ -32,13 +32,14 @@ show_instance() {
     fi
 
     source "$metadata"
-    local amf_ip="${AMF_IP:-?}"
-    local upf_ip="${UPF_IP:-?}"
+    local trx_ip="${TRX_IP:-?}"
+    local ng_ip="${NG_IP:-?}"
     local host_ip="${HOST_IP:-?}"
     local parent_iface="${PARENT_IFACE:-?}"
     local ue_subnet="${UE_SUBNET:-?}"
     local mongo_ip="${MONGO_IP:-?}"
     local db_name="${DB_NAME:-open5gs}"
+    local container_name="${CONTAINER_NAME:-${name}}"
 
     hdr ""
     hdr "  ═══ Instance: ${name} ═══"
@@ -47,27 +48,27 @@ show_instance() {
     echo "${BOLD}Container:${NC}"
     local all_ok=true
     local state
-    state=$(docker inspect --format='{{.State.Status}}' "${name}" 2>/dev/null || echo "not found")
+    state=$(docker inspect --format='{{.State.Status}}' "${container_name}" 2>/dev/null || echo "not found")
     local health=""
-    health=$(docker inspect --format='{{if .State.Health}} ({{.State.Health.Status}}){{end}}' "${name}" 2>/dev/null || true)
+    health=$(docker inspect --format='{{if .State.Health}} ({{.State.Health.Status}}){{end}}' "${container_name}" 2>/dev/null || true)
     if [ "$state" = "running" ]; then
-        printf "  ${GREEN}✓${NC} %-25s %s%s\n" "${name}" "$state" "$health"
+        printf "  ${GREEN}✓${NC} %-25s %s%s\n" "${container_name}" "$state" "$health"
     else
-        printf "  ${RED}✗${NC} %-25s %s\n" "${name}" "$state"
+        printf "  ${RED}✗${NC} %-25s %s\n" "${container_name}" "$state"
         all_ok=false
     fi
 
     echo ""
     echo "${BOLD}Network (host on ${parent_iface}):${NC}"
-    log "  TRX/NGAP:  ${amf_ip}:${NGAP_PORT}"
-    log "  UPF/GTPU:  ${upf_ip}:${GTPU_PORT}"
+    log "  TRX/NGAP:  ${trx_ip}:${NGAP_PORT}"
+    log "  NG/GTPU:   ${ng_ip}:${GTPU_PORT}"
     log "  UE Pool:   ${ue_subnet}"
 
     echo ""
     echo "${BOLD}NRF Registrations:${NC}"
     local nrf_output
     nrf_output=$(curl -s --max-time 3 --http2-prior-knowledge \
-        "http://${amf_ip}:7777/nnrf-nfm/v1/nf-instances" 2>/dev/null || echo "")
+        "http://${trx_ip}:7777/nnrf-nfm/v1/nf-instances" 2>/dev/null || echo "")
     if [ -n "$nrf_output" ]; then
         local nf_count
         nf_count=$(echo "$nrf_output" | python3 -c "
@@ -81,7 +82,7 @@ except:
 " 2>/dev/null || echo "?")
         ok "NRF reachable — ${nf_count} NFs registered"
     else
-        warn "NRF not reachable at ${amf_ip}:7777"
+        warn "NRF not reachable at ${trx_ip}:7777"
     fi
 
     echo ""
@@ -127,7 +128,7 @@ else
             show_instance "$name"
         done
     else
-        log "No instances running. Start one: ./scripts/start.sh --trx-ip <IP> --upf-ip <IP>"
+        log "No instances running. Start one: ./scripts/start.sh --lm-ip <IP> --trx-ip <IP> --ng-ip <IP>"
     fi
 fi
 

@@ -3,13 +3,13 @@
 # start.sh — Start a CN (Core Network) instance for a TRX
 # ============================================================
 # Usage:
-#   ./scripts/start.sh --trx-ip <IP> --upf-ip <IP>
-#   ./scripts/start.sh --trx-ip <IP> --upf-ip <IP> --mcc 404 --mnc 30
-#   ./scripts/start.sh --trx-ip <IP> --upf-ip <IP> --plmn 404:30 --plmn 404:20
-#   ./scripts/start.sh --trx-ip <IP> --upf-ip <IP> --debug
+#   ./scripts/start.sh --lm-ip <IP> --trx-ip <IP> --ng-ip <IP>
+#   ./scripts/start.sh --lm-ip <IP> --trx-ip <IP> --ng-ip <IP> --mcc 404 --mnc 30
+#   ./scripts/start.sh --lm-ip <IP> --trx-ip <IP> --ng-ip <IP> --plmn 404:30 --plmn 404:20
+#   ./scripts/start.sh --lm-ip <IP> --trx-ip <IP> --ng-ip <IP> --debug
 #
-# Host networking: TRX_IP (=AMF) and UPF_IP are added as secondary IPs
-# on the host interface. Container uses network_mode: host.
+# Host networking: TRX_IP and NG_IP are added as secondary IPs
+# on the host interface (detected via LM_IP). Container uses network_mode: host.
 # ============================================================
 
 set -uo pipefail
@@ -17,8 +17,9 @@ source "$(dirname "$0")/env.sh"
 cd "$PROJECT_DIR"
 
 # ── Parse arguments ──────────────────────────────────────────
+LM_IP=""
 TRX_IP=""
-UPF_IP=""
+NG_IP=""
 IFACE_OVERRIDE=""
 MCC="$DEFAULT_MCC"
 MNC="$DEFAULT_MNC"
@@ -34,8 +35,9 @@ MCC_MNC_SET=false   # Track if --mcc/--mnc was used
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --lm-ip)     LM_IP="$2"; shift ;;
         --trx-ip)    TRX_IP="$2"; shift ;;
-        --upf-ip)    UPF_IP="$2"; shift ;;
+        --ng-ip)     NG_IP="$2"; shift ;;
         --iface)     IFACE_OVERRIDE="$2"; shift ;;
         --mcc)       MCC="$2"; MCC_MNC_SET=true; shift ;;
         --mnc)       MNC="$2"; MCC_MNC_SET=true; shift ;;
@@ -57,12 +59,13 @@ if [ ${#PLMN_LIST[@]} -eq 0 ]; then
     PLMN_LIST=("${MCC}:${MNC}")
 fi
 
-if [ -z "$TRX_IP" ] || [ -z "$UPF_IP" ]; then
-    err "Usage: ./scripts/start.sh --trx-ip <IP> --upf-ip <IP> [options]"
+if [ -z "$LM_IP" ] || [ -z "$TRX_IP" ] || [ -z "$NG_IP" ]; then
+    err "Usage: ./scripts/start.sh --lm-ip <IP> --trx-ip <IP> --ng-ip <IP> [options]"
     err ""
     err "Required:"
-    err "  --trx-ip IP     TRX/AMF/CP IP address (on host network)"
-    err "  --upf-ip IP     UPF IP address (on host network)"
+    err "  --lm-ip IP      LAN Management IP (existing IP on host, used to detect interface)"
+    err "  --trx-ip IP     TRX/CP IP address (added as secondary IP)"
+    err "  --ng-ip IP      NG interface IP for UPF (added as secondary IP)"
     err ""
     err "Optional:"
     err "  --mcc X         MCC (default: ${DEFAULT_MCC})  — single PLMN"
@@ -74,29 +77,26 @@ if [ -z "$TRX_IP" ] || [ -z "$UPF_IP" ]; then
     err "  --dnn D         DNN (default: ${DEFAULT_DNN})"
     err "  --ue-subnet X   UE pool subnet (default: ${DEFAULT_UE_SUBNET})"
     err "  --ue-gw X       UE pool gateway (default: ${DEFAULT_UE_GW})"
-    err "  --iface NAME    Force network interface (default: auto-detect from TRX IP)"
+    err "  --iface NAME    Force network interface (default: auto-detect from LM IP)"
     err "  --debug         Enable debug logging"
     exit 1
 fi
 
-# TRX IP is the AMF/CP IP
-AMF_IP="$TRX_IP"
-
 # Derive instance name and compose project from TRX IP
 INSTANCE_NAME="trx-${TRX_IP}"
 COMPOSE_PROJECT="${INSTANCE_NAME//./-}"    # dots → dashes for compose project
+CONTAINER_NAME="open5gs_${TRX_IP}"
 
 # Derive unique TUN device from last octet of TRX IP
 TUN_SUFFIX="${TRX_IP##*.}"
 TUN_DEV="ogstun${TUN_SUFFIX}"
 
-# ── Auto-detect network config ────────────────────────────────
+# ── Detect network interface using LM IP ─────────────────────
 if [ -n "$IFACE_OVERRIDE" ]; then
     PARENT_IFACE="$IFACE_OVERRIDE"
     log "Using user-specified interface: ${PARENT_IFACE}"
 else
-    # Try route-based detection first
-    PARENT_IFACE=$(detect_interface "$AMF_IP")
+    PARENT_IFACE=$(detect_interface "$LM_IP")
 
     # If route-based detection returns a virtual interface, fall back to smart detection
     case "$PARENT_IFACE" in
@@ -108,18 +108,18 @@ else
             fi
             ;;
         *)
-            log "Auto-detected interface from routing: ${PARENT_IFACE}"
+            log "Auto-detected interface from LM IP (${LM_IP}): ${PARENT_IFACE}"
             ;;
     esac
 fi
 
 if [ -z "$PARENT_IFACE" ]; then
-    err "Cannot determine network interface for TRX IP ${TRX_IP}"
+    err "Cannot determine network interface from LM IP ${LM_IP}"
     err "Available interfaces:"
     ip -4 -br addr show | while read -r line; do err "  $line"; done
     err ""
     err "Use --iface <name> to specify manually, e.g.:"
-    err "  ./scripts/start.sh --trx-ip ${TRX_IP} --upf-ip ${UPF_IP} --iface enp1s0"
+    err "  ./scripts/start.sh --lm-ip ${LM_IP} --trx-ip ${TRX_IP} --ng-ip ${NG_IP} --iface enp1s0"
     exit 1
 fi
 
@@ -143,17 +143,15 @@ DB_NAME="open5gs"
 LOG_LEVEL="info"
 [ "$DEBUG_MODE" = true ] && LOG_LEVEL="debug"
 
-# PFCP: SMF and UPF both on host network, use AMF/UPF IPs (port 8805 on different IPs)
-PFCP_CP_IP="$AMF_IP"
-PFCP_UPF_IP="$UPF_IP"
-
 PLMN_DISPLAY=$(IFS=', '; echo "${PLMN_LIST[*]}")
 
 hdr ""
 hdr "  Starting CN Instance: ${INSTANCE_NAME}"
 hdr "  ─────────────────────────────────"
+log "  LM IP:      ${LM_IP}  (management)"
 log "  TRX IP:     ${TRX_IP}  (NGAP:${NGAP_PORT})"
-log "  UPF IP:     ${UPF_IP}  (GTP-U:${GTPU_PORT})"
+log "  NG IP:      ${NG_IP}  (GTP-U:${GTPU_PORT})"
+log "  Container:  ${CONTAINER_NAME}"
 log "  Interface:  ${PARENT_IFACE}  (subnet: ${HOST_SUBNET}, mode: host)"
 log "  Host IP:    ${HOST_IP}"
 log "  MongoDB:    ${MONGO_IP}:27017 (db: ${DB_NAME})"
@@ -171,10 +169,10 @@ mkdir -p "${INST_CONFIG}" "${LOG_DIR}"
 # Copy base configs and replace all placeholders in one pass
 for f in nrf.yaml scp.yaml amf.yaml smf.yaml upf.yaml ausf.yaml udm.yaml udr.yaml pcf.yaml nssf.yaml bsf.yaml; do
     sed -e "s|__MONGO_HOST__|${MONGO_IP}|g" \
-        -e "s|__CP_IP__|${AMF_IP}|g" \
-        -e "s|__UPF_IP__|${UPF_IP}|g" \
-        -e "s|__PFCP_CP_IP__|${PFCP_CP_IP}|g" \
-        -e "s|__PFCP_UPF_IP__|${PFCP_UPF_IP}|g" \
+        -e "s|__CP_IP__|${TRX_IP}|g" \
+        -e "s|__UPF_IP__|${NG_IP}|g" \
+        -e "s|__PFCP_CP_IP__|${TRX_IP}|g" \
+        -e "s|__PFCP_UPF_IP__|${NG_IP}|g" \
         -e "s|__UE_SUBNET__|${UE_SUBNET}|g" \
         -e "s|__UE_GW__|${UE_GW}|g" \
         -e "s|__TUN_DEV__|${TUN_DEV}|g" \
@@ -246,17 +244,17 @@ sed -i "s/sd: [0-9a-fA-F]*/sd: ${SD}/g" "${INST_CONFIG}/nssf.yaml"
 
 # ── Add secondary IPs to host interface ──────────────────────
 log "Adding secondary IPs to ${PARENT_IFACE}..."
-if ! ip addr show "$PARENT_IFACE" | grep -q "inet ${AMF_IP}/"; then
-    ip addr add "${AMF_IP}/${HOST_PREFIX}" dev "$PARENT_IFACE" 2>/dev/null || true
-    ok "Added ${AMF_IP}/${HOST_PREFIX} to ${PARENT_IFACE}"
+if ! ip addr show "$PARENT_IFACE" | grep -q "inet ${TRX_IP}/"; then
+    ip addr add "${TRX_IP}/${HOST_PREFIX}" dev "$PARENT_IFACE" 2>/dev/null || true
+    ok "Added ${TRX_IP}/${HOST_PREFIX} to ${PARENT_IFACE}"
 else
-    log "${AMF_IP} already on ${PARENT_IFACE}"
+    log "${TRX_IP} already on ${PARENT_IFACE}"
 fi
-if ! ip addr show "$PARENT_IFACE" | grep -q "inet ${UPF_IP}/"; then
-    ip addr add "${UPF_IP}/${HOST_PREFIX}" dev "$PARENT_IFACE" 2>/dev/null || true
-    ok "Added ${UPF_IP}/${HOST_PREFIX} to ${PARENT_IFACE}"
+if ! ip addr show "$PARENT_IFACE" | grep -q "inet ${NG_IP}/"; then
+    ip addr add "${NG_IP}/${HOST_PREFIX}" dev "$PARENT_IFACE" 2>/dev/null || true
+    ok "Added ${NG_IP}/${HOST_PREFIX} to ${PARENT_IFACE}"
 else
-    log "${UPF_IP} already on ${PARENT_IFACE}"
+    log "${NG_IP} already on ${PARENT_IFACE}"
 fi
 
 # ── Generate .env for docker-compose ─────────────────────────
@@ -265,12 +263,13 @@ ENV_FILE="${INST_DIR}/.env"
 cat > "${ENV_FILE}" <<ENVEOF
 # Auto-generated for ${INSTANCE_NAME} — used by docker-compose.yaml
 INSTANCE_NAME=${INSTANCE_NAME}
+CONTAINER_NAME=${CONTAINER_NAME}
 IMAGE=${IMAGE}
 INST_CONFIG=${INST_CONFIG}
 INST_DIR=${INST_DIR}
 LOG_DIR=${LOG_DIR}
-AMF_IP=${AMF_IP}
-UPF_IP=${UPF_IP}
+TRX_IP=${TRX_IP}
+NG_IP=${NG_IP}
 MONGO_IP=${MONGO_IP}
 DB_NAME=${DB_NAME}
 TUN_DEV=${TUN_DEV}
@@ -280,12 +279,12 @@ ENVEOF
 log "Starting containers (host networking)..."
 docker compose -p "${COMPOSE_PROJECT}" --env-file "${ENV_FILE}" -f "${PROJECT_DIR}/docker-compose.yaml" up -d
 
-log "Waiting for Control Plane (NRF on ${AMF_IP}:7777)..."
-wait_port "${AMF_IP}" 7777 60
+log "Waiting for Control Plane (NRF on ${TRX_IP}:7777)..."
+wait_port "${TRX_IP}" 7777 60
 
 # ── Set up host routing for UE traffic ────────────────────────
 log "Setting up data plane routing..."
-ip route add "${UE_SUBNET}" via "${UPF_IP}" 2>/dev/null || true
+ip route add "${UE_SUBNET}" via "${NG_IP}" 2>/dev/null || true
 iptables -t nat -C POSTROUTING -s "${UE_SUBNET}" -j MASQUERADE 2>/dev/null || \
     iptables -t nat -A POSTROUTING -s "${UE_SUBNET}" -j MASQUERADE
 iptables -C FORWARD -s "${UE_SUBNET}" -j ACCEPT 2>/dev/null || \
@@ -295,9 +294,10 @@ iptables -C FORWARD -d "${UE_SUBNET}" -j ACCEPT 2>/dev/null || \
 
 # ── Save instance metadata ────────────────────────────────────
 cat > "${INST_DIR}/metadata.env" <<METAEOF
+LM_IP=${LM_IP}
 TRX_IP=${TRX_IP}
-AMF_IP=${AMF_IP}
-UPF_IP=${UPF_IP}
+NG_IP=${NG_IP}
+CONTAINER_NAME=${CONTAINER_NAME}
 LOG_DIR=${LOG_DIR}
 PARENT_IFACE=${PARENT_IFACE}
 HOST_PREFIX=${HOST_PREFIX}
@@ -322,9 +322,10 @@ hdr "  CN Instance ${INSTANCE_NAME} is RUNNING"
 hdr "  ========================================="
 hdr ""
 hdr "  ── gNB connects to (IPs on ${PARENT_IFACE}) ──"
-log "    NGAP/SCTP: ${AMF_IP}:${NGAP_PORT}"
-log "    GTP-U/UDP: ${UPF_IP}:${GTPU_PORT}"
+log "    NGAP/SCTP: ${TRX_IP}:${NGAP_PORT}"
+log "    GTP-U/UDP: ${NG_IP}:${GTPU_PORT}"
 hdr ""
+log "  Container: ${CONTAINER_NAME}"
 log "  PLMN:   ${PLMN_DISPLAY}  TAC=${TAC}"
 log "  Slice:  SST=${SST} SD=${SD}"
 log "  UE:     ${UE_SUBNET}"

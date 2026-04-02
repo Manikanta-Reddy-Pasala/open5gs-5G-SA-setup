@@ -48,15 +48,16 @@ stop_instance() {
     fi
 
     # Load saved metadata for IP addresses
-    local amf_ip="" upf_ip="" ue_subnet="" parent_iface="" host_prefix="" tun_dev=""
+    local trx_ip="" ng_ip="" ue_subnet="" parent_iface="" host_prefix="" tun_dev="" container_name=""
     if [ -f "$metadata" ]; then
         source "$metadata"
-        amf_ip="${AMF_IP:-}"
-        upf_ip="${UPF_IP:-}"
+        trx_ip="${TRX_IP:-}"
+        ng_ip="${NG_IP:-}"
         ue_subnet="${UE_SUBNET:-}"
         parent_iface="${PARENT_IFACE:-}"
         host_prefix="${HOST_PREFIX:-}"
         tun_dev="${TUN_DEV:-}"
+        container_name="${CONTAINER_NAME:-}"
     else
         warn "No metadata.env for ${name} — cannot clean up networking"
     fi
@@ -73,8 +74,8 @@ stop_instance() {
         fi
 
         # Cleanup UE routes + iptables
-        if [ -n "$ue_subnet" ] && [ -n "$upf_ip" ]; then
-            ip route del "${ue_subnet}" via "${upf_ip}" 2>/dev/null || true
+        if [ -n "$ue_subnet" ] && [ -n "$ng_ip" ]; then
+            ip route del "${ue_subnet}" via "${ng_ip}" 2>/dev/null || true
             iptables -t nat -D POSTROUTING -s "${ue_subnet}" -j MASQUERADE 2>/dev/null || true
             iptables -D FORWARD -s "${ue_subnet}" -j ACCEPT 2>/dev/null || true
             iptables -D FORWARD -d "${ue_subnet}" -j ACCEPT 2>/dev/null || true
@@ -82,13 +83,13 @@ stop_instance() {
 
         # Remove secondary IPs from host interface
         if [ -n "$parent_iface" ] && [ -n "$host_prefix" ]; then
-            if [ -n "$amf_ip" ]; then
-                ip addr del "${amf_ip}/${host_prefix}" dev "$parent_iface" 2>/dev/null || true
-                log "Removed ${amf_ip}/${host_prefix} from ${parent_iface}"
+            if [ -n "$trx_ip" ]; then
+                ip addr del "${trx_ip}/${host_prefix}" dev "$parent_iface" 2>/dev/null || true
+                log "Removed ${trx_ip}/${host_prefix} from ${parent_iface}"
             fi
-            if [ -n "$upf_ip" ]; then
-                ip addr del "${upf_ip}/${host_prefix}" dev "$parent_iface" 2>/dev/null || true
-                log "Removed ${upf_ip}/${host_prefix} from ${parent_iface}"
+            if [ -n "$ng_ip" ]; then
+                ip addr del "${ng_ip}/${host_prefix}" dev "$parent_iface" 2>/dev/null || true
+                log "Removed ${ng_ip}/${host_prefix} from ${parent_iface}"
             fi
         fi
 

@@ -52,7 +52,7 @@ else
     if [ -f "$local_log" ]; then
         tail -f "$local_log"
     else
-        docker exec "${INSTANCE_NAME}" tail -f "/var/log/open5gs/${NF}.log" 2>/dev/null || \
+        docker exec "open5gs_${TRX_IP}" tail -f "/var/log/open5gs/${NF}.log" 2>/dev/null || \
             err "Log not found: ${local_log}"
     fi
 fi
