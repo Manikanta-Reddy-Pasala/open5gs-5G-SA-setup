@@ -82,6 +82,11 @@ if [ -z "$LM_IP" ] || [ -z "$TRX_IP" ] || [ -z "$NG_IP" ]; then
     exit 1
 fi
 
+if [ "$TRX_IP" = "$NG_IP" ]; then
+    err "--trx-ip and --ng-ip must be different IPs (PFCP port 8805 conflict)"
+    exit 1
+fi
+
 # Derive instance name and compose project from TRX IP
 INSTANCE_NAME="trx-${TRX_IP}"
 COMPOSE_PROJECT="${INSTANCE_NAME//./-}"    # dots → dashes for compose project
@@ -171,8 +176,8 @@ for f in nrf.yaml scp.yaml amf.yaml smf.yaml upf.yaml ausf.yaml udm.yaml udr.yam
     sed -e "s|__MONGO_HOST__|${MONGO_IP}|g" \
         -e "s|__CP_IP__|${TRX_IP}|g" \
         -e "s|__UPF_IP__|${NG_IP}|g" \
-        -e "s|__PFCP_CP_IP__|127.0.0.1|g" \
-        -e "s|__PFCP_UPF_IP__|127.0.0.2|g" \
+        -e "s|__PFCP_CP_IP__|${TRX_IP}|g" \
+        -e "s|__PFCP_UPF_IP__|${NG_IP}|g" \
         -e "s|__UE_SUBNET__|${UE_SUBNET}|g" \
         -e "s|__UE_GW__|${UE_GW}|g" \
         -e "s|__TUN_DEV__|${TUN_DEV}|g" \
