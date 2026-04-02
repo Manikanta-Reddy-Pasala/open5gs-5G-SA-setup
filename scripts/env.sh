@@ -49,6 +49,14 @@ hdr()  { echo "${BOLD}${CYAN}$1${NC}" >&2; }
 
 # ── Network helpers ─────────────────────────────────────────
 
+# Find the interface that has a specific IP assigned to it
+find_interface_by_ip() {
+    local target_ip="$1"
+    ip -4 -o addr show 2>/dev/null \
+        | awk -v ip="$target_ip" '{split($4,a,"/"); if(a[1]==ip) print $2}' \
+        | head -1
+}
+
 # Detect the host interface that can route to a given IP
 detect_interface() {
     local target_ip="$1"

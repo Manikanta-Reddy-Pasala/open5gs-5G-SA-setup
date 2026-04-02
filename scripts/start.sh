@@ -96,21 +96,21 @@ if [ -n "$IFACE_OVERRIDE" ]; then
     PARENT_IFACE="$IFACE_OVERRIDE"
     log "Using user-specified interface: ${PARENT_IFACE}"
 else
-    PARENT_IFACE=$(detect_interface "$LM_IP")
+    # Find the interface that has the LM IP assigned
+    PARENT_IFACE=$(find_interface_by_ip "$LM_IP")
 
-    # If route-based detection returns a virtual interface, fall back to smart detection
-    case "$PARENT_IFACE" in
-        mac-*|docker*|veth*|virbr*|"")
-            log "Route-based detection returned '${PARENT_IFACE:-nothing}', trying smart detection..."
-            PARENT_IFACE=$(detect_physical_interface)
-            if [ -n "$PARENT_IFACE" ]; then
-                log "Auto-detected physical interface: ${PARENT_IFACE}"
-            fi
-            ;;
-        *)
-            log "Auto-detected interface from LM IP (${LM_IP}): ${PARENT_IFACE}"
-            ;;
-    esac
+    if [ -z "$PARENT_IFACE" ]; then
+        log "LM IP ${LM_IP} not found on any interface, trying route-based detection..."
+        PARENT_IFACE=$(detect_interface "$LM_IP")
+        case "$PARENT_IFACE" in
+            lo|mac-*|docker*|veth*|virbr*|"")
+                log "Route-based detection returned '${PARENT_IFACE:-nothing}', trying smart detection..."
+                PARENT_IFACE=$(detect_physical_interface)
+                ;;
+        esac
+    fi
+
+    [ -n "$PARENT_IFACE" ] && log "Detected interface from LM IP (${LM_IP}): ${PARENT_IFACE}"
 fi
 
 if [ -z "$PARENT_IFACE" ]; then
