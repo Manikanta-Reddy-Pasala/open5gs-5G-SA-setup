@@ -171,8 +171,8 @@ for f in nrf.yaml scp.yaml amf.yaml smf.yaml upf.yaml ausf.yaml udm.yaml udr.yam
     sed -e "s|__MONGO_HOST__|${MONGO_IP}|g" \
         -e "s|__CP_IP__|${TRX_IP}|g" \
         -e "s|__UPF_IP__|${NG_IP}|g" \
-        -e "s|__PFCP_CP_IP__|${TRX_IP}|g" \
-        -e "s|__PFCP_UPF_IP__|${NG_IP}|g" \
+        -e "s|__PFCP_CP_IP__|127.0.0.1|g" \
+        -e "s|__PFCP_UPF_IP__|127.0.0.2|g" \
         -e "s|__UE_SUBNET__|${UE_SUBNET}|g" \
         -e "s|__UE_GW__|${UE_GW}|g" \
         -e "s|__TUN_DEV__|${TUN_DEV}|g" \

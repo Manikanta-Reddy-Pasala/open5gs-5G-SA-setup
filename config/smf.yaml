@@ -22,7 +22,7 @@ smf:
       - address: __CP_IP__
   gtpu:
     server:
-      - address: __CP_IP__
+      - address: __PFCP_CP_IP__
   metrics:
     server:
       - address: __CP_IP__
