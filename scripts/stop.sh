@@ -81,16 +81,10 @@ stop_instance() {
             iptables -D FORWARD -d "${ue_subnet}" -j ACCEPT 2>/dev/null || true
         fi
 
-        # Remove secondary IPs from host interface
-        if [ -n "$parent_iface" ] && [ -n "$host_prefix" ]; then
-            if [ -n "$trx_ip" ]; then
-                ip addr del "${trx_ip}/${host_prefix}" dev "$parent_iface" 2>/dev/null || true
-                log "Removed ${trx_ip}/${host_prefix} from ${parent_iface}"
-            fi
-            if [ -n "$ng_ip" ]; then
-                ip addr del "${ng_ip}/${host_prefix}" dev "$parent_iface" 2>/dev/null || true
-                log "Removed ${ng_ip}/${host_prefix} from ${parent_iface}"
-            fi
+        # Remove NG secondary IP from host interface
+        if [ -n "$parent_iface" ] && [ -n "$host_prefix" ] && [ -n "$ng_ip" ]; then
+            ip addr del "${ng_ip}/${host_prefix}" dev "$parent_iface" 2>/dev/null || true
+            log "Removed ${ng_ip}/${host_prefix} from ${parent_iface}"
         fi
 
         rm -rf "${inst_dir}"

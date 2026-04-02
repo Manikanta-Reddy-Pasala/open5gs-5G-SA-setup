@@ -242,14 +242,8 @@ sed -i "s/sd: [0-9a-fA-F]*/sd: ${SD}/g" "${INST_CONFIG}/smf.yaml"
 sed -i "s/sst: [0-9]*/sst: ${SST}/g" "${INST_CONFIG}/nssf.yaml"
 sed -i "s/sd: [0-9a-fA-F]*/sd: ${SD}/g" "${INST_CONFIG}/nssf.yaml"
 
-# ── Add secondary IPs to host interface ──────────────────────
-log "Adding secondary IPs to ${PARENT_IFACE}..."
-if ! ip addr show "$PARENT_IFACE" | grep -q "inet ${TRX_IP}/"; then
-    ip addr add "${TRX_IP}/${HOST_PREFIX}" dev "$PARENT_IFACE" 2>/dev/null || true
-    ok "Added ${TRX_IP}/${HOST_PREFIX} to ${PARENT_IFACE}"
-else
-    log "${TRX_IP} already on ${PARENT_IFACE}"
-fi
+# ── Add secondary IP for NG interface ─────────────────────────
+log "Adding NG IP to ${PARENT_IFACE}..."
 if ! ip addr show "$PARENT_IFACE" | grep -q "inet ${NG_IP}/"; then
     ip addr add "${NG_IP}/${HOST_PREFIX}" dev "$PARENT_IFACE" 2>/dev/null || true
     ok "Added ${NG_IP}/${HOST_PREFIX} to ${PARENT_IFACE}"
