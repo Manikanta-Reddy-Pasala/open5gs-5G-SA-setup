@@ -32,8 +32,8 @@ show_instance() {
     fi
 
     source "$metadata"
-    local trx_ip="${TRX_IP:-?}"
-    local ng_ip="${NG_IP:-?}"
+    local cp_ip="${CP_IP:-?}"
+    local upf_ip="${UPF_IP:-?}"
     local host_ip="${HOST_IP:-?}"
     local parent_iface="${PARENT_IFACE:-?}"
     local ue_subnet="${UE_SUBNET:-?}"
@@ -60,15 +60,15 @@ show_instance() {
 
     echo ""
     echo "${BOLD}Network (host on ${parent_iface}):${NC}"
-    log "  TRX/NGAP:  ${trx_ip}:${NGAP_PORT}"
-    log "  NG/GTPU:   ${ng_ip}:${GTPU_PORT}"
+    log "  CP/NGAP:   ${cp_ip}:${NGAP_PORT}"
+    log "  UPF/GTPU:  ${upf_ip}:${GTPU_PORT}"
     log "  UE Pool:   ${ue_subnet}"
 
     echo ""
     echo "${BOLD}NRF Registrations:${NC}"
     local nrf_output
     nrf_output=$(curl -s --max-time 3 --http2-prior-knowledge \
-        "http://${trx_ip}:7777/nnrf-nfm/v1/nf-instances" 2>/dev/null || echo "")
+        "http://${cp_ip}:7777/nnrf-nfm/v1/nf-instances" 2>/dev/null || echo "")
     if [ -n "$nrf_output" ]; then
         local nf_count
         nf_count=$(echo "$nrf_output" | python3 -c "
@@ -82,7 +82,7 @@ except:
 " 2>/dev/null || echo "?")
         ok "NRF reachable — ${nf_count} NFs registered"
     else
-        warn "NRF not reachable at ${trx_ip}:7777"
+        warn "NRF not reachable at ${cp_ip}:7777"
     fi
 
     echo ""
@@ -128,7 +128,7 @@ else
             show_instance "$name"
         done
     else
-        log "No instances running. Start one: ./scripts/start.sh --lm-ip <IP> --trx-ip <IP> --ng-ip <IP>"
+        log "No instances running. Start one: ./scripts/start.sh --lm-ip <IP> --trx-ip <IP> --cp-ip <IP> --upf-ip <IP>"
     fi
 fi
 
