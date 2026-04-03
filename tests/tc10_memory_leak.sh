@@ -32,24 +32,16 @@ get_mem() {
         python3 -c "import sys; s=sys.stdin.read().strip(); print(eval(s) if s else 0)" 2>/dev/null || echo 0
 }
 
-MEM_CP_START=$(get_mem open5gs-cp)
-MEM_UPF_START=$(get_mem open5gs-upf)
-MEM_DB_START=$(get_mem open5gs-mongodb)
-MEM_UE_START=$(get_mem open5gs-ueransim)
+MEM_CORE_START=$(get_mem "$CONTAINER_NAME")
 
 info "Baseline memory (MiB):"
-printf "    %-25s %s\n" "open5gs-cp:"     "$MEM_CP_START"
-printf "    %-25s %s\n" "open5gs-upf:"    "$MEM_UPF_START"
-printf "    %-25s %s\n" "open5gs-mongodb:" "$MEM_DB_START"
-printf "    %-25s %s\n" "open5gs-ueransim:" "$MEM_UE_START"
+printf "    %-25s %s\n" "${CONTAINER_NAME}:" "$MEM_CORE_START"
 
 # Prepare UE config files
-TMPDIR=$(mktemp -d)
 for (( i=0; i<NUM_UES; i++ )); do
     supi_num=$(supi_add "$BASE_SUPI" "$i")
     k=$(hex_add "$BASE_K" "$i")
-    generate_ue_config "$supi_num" "$k" "$OPC" "${TMPDIR}/ue${i}.yaml" "internet"
-    docker cp "${TMPDIR}/ue${i}.yaml" open5gs-ueransim:/ueransim/config/ue_mem${i}.yaml
+    generate_ue_config "$supi_num" "$k" "$OPC" "${UE_CONFIG_DIR}/ue_mem${i}.yaml" "internet"
 done
 
 # Step 3: Run register/deregister cycles
@@ -62,16 +54,16 @@ echo "open5GS Memory Leak Test Report"
 echo "Date: $(date)"
 echo "Cycles: ${CYCLES}, UEs per cycle: ${NUM_UES}"
 echo ""
-echo "Baseline: CP=${MEM_CP_START}MiB  UPF=${MEM_UPF_START}MiB  DB=${MEM_DB_START}MiB  UE=${MEM_UE_START}MiB"
+echo "Baseline: Core=${MEM_CORE_START}MiB"
 echo ""
-echo "Cycle | CP(MiB) | UPF(MiB) | DB(MiB) | UE(MiB)"
-echo "------|---------|----------|---------|--------"
+echo "Cycle | Core(MiB)"
+echo "------|----------"
 } > "$REPORT_FILE"
 
 for (( cycle=1; cycle<=CYCLES; cycle++ )); do
     # Register all UEs
     for (( i=0; i<NUM_UES; i++ )); do
-        docker exec -d open5gs-ueransim ./nr-ue -c ./config/ue_mem${i}.yaml
+        "${UERANSIM_DIR}/nr-ue" -c "${UE_CONFIG_DIR}/ue_mem${i}.yaml" > "${UE_CONFIG_DIR}/ue_mem${i}.log" 2>&1 &
     done
     sleep 12
 
@@ -80,7 +72,7 @@ for (( cycle=1; cycle<=CYCLES; cycle++ )); do
     for (( i=0; i<NUM_UES; i++ )); do
         supi_num=$(supi_add "$BASE_SUPI" "$i")
         imsi="imsi-${supi_num}"
-        status=$(docker exec open5gs-ueransim ./nr-cli "$imsi" -e "status" 2>/dev/null)
+        status=$("${UERANSIM_DIR}/nr-cli" "$imsi" -e "status" 2>/dev/null)
         echo "$status" | grep -q "RM-REGISTERED" && reg=$((reg + 1))
     done
 
@@ -88,7 +80,7 @@ for (( cycle=1; cycle<=CYCLES; cycle++ )); do
     for (( i=0; i<NUM_UES; i++ )); do
         supi_num=$(supi_add "$BASE_SUPI" "$i")
         imsi="imsi-${supi_num}"
-        docker exec open5gs-ueransim ./nr-cli "$imsi" -e "deregister normal" 2>/dev/null &
+        "${UERANSIM_DIR}/nr-cli" "$imsi" -e "deregister normal" 2>/dev/null &
     done
     wait
     sleep 8
@@ -96,14 +88,11 @@ for (( cycle=1; cycle<=CYCLES; cycle++ )); do
 
     # Snapshot memory every 5 cycles
     if [ $((cycle % 5)) -eq 0 ] || [ "$cycle" -eq "$CYCLES" ]; then
-        cp_mem=$(get_mem open5gs-cp)
-        upf_mem=$(get_mem open5gs-upf)
-        db_mem=$(get_mem open5gs-mongodb)
-        ue_mem=$(get_mem open5gs-ueransim)
-        printf "  Cycle %2d: CP=%.1fMiB UPF=%.1fMiB DB=%.1fMiB UE=%.1fMiB (registered: %d/%d)\n" \
-            "$cycle" "$cp_mem" "$upf_mem" "$db_mem" "$ue_mem" "$reg" "$NUM_UES"
-        printf "%5d | %7.1f | %8.1f | %7.1f | %7.1f\n" \
-            "$cycle" "$cp_mem" "$upf_mem" "$db_mem" "$ue_mem" >> "$REPORT_FILE"
+        core_mem=$(get_mem "$CONTAINER_NAME")
+        printf "  Cycle %2d: Core=%.1fMiB (registered: %d/%d)\n" \
+            "$cycle" "$core_mem" "$reg" "$NUM_UES"
+        printf "%5d | %9.1f\n" \
+            "$cycle" "$core_mem" >> "$REPORT_FILE"
     else
         printf "  Cycle %2d/%d (registered: %d/%d)\r" "$cycle" "$CYCLES" "$reg" "$NUM_UES"
     fi
@@ -111,10 +100,7 @@ done
 echo ""
 
 # Step 4: Capture final memory
-MEM_CP_END=$(get_mem open5gs-cp)
-MEM_UPF_END=$(get_mem open5gs-upf)
-MEM_DB_END=$(get_mem open5gs-mongodb)
-MEM_UE_END=$(get_mem open5gs-ueransim)
+MEM_CORE_END=$(get_mem "$CONTAINER_NAME")
 
 # Step 5: Calculate growth and report
 calc_growth() {
@@ -128,38 +114,31 @@ else:
 " 2>/dev/null || echo "N/A"
 }
 
-cp_growth=$(calc_growth "$MEM_CP_START" "$MEM_CP_END")
-upf_growth=$(calc_growth "$MEM_UPF_START" "$MEM_UPF_END")
-db_growth=$(calc_growth "$MEM_DB_START" "$MEM_DB_END")
+core_growth=$(calc_growth "$MEM_CORE_START" "$MEM_CORE_END")
 
 {
 echo ""
-echo "Final: CP=${MEM_CP_END}MiB  UPF=${MEM_UPF_END}MiB  DB=${MEM_DB_END}MiB  UE=${MEM_UE_END}MiB"
-echo "Growth: CP=${cp_growth}  UPF=${upf_growth}  DB=${db_growth}"
+echo "Final: Core=${MEM_CORE_END}MiB"
+echo "Growth: Core=${core_growth}"
 } >> "$REPORT_FILE"
 
 echo ""
 info "Memory growth after ${CYCLES} cycles:"
-printf "    %-20s start=%s MiB  end=%s MiB  growth=%s\n" "open5gs-cp:"    "$MEM_CP_START" "$MEM_CP_END"  "$cp_growth"
-printf "    %-20s start=%s MiB  end=%s MiB  growth=%s\n" "open5gs-upf:"   "$MEM_UPF_START" "$MEM_UPF_END" "$upf_growth"
-printf "    %-20s start=%s MiB  end=%s MiB  growth=%s\n" "open5gs-mongodb:" "$MEM_DB_START" "$MEM_DB_END"  "$db_growth"
-
-# Cleanup
-rm -rf "$TMPDIR"
+printf "    %-20s start=%s MiB  end=%s MiB  growth=%s\n" "${CONTAINER_NAME}:" "$MEM_CORE_START" "$MEM_CORE_END" "$core_growth"
 
 # Evaluate result
-cp_pct=$(python3 -c "
-s,e = float('${MEM_CP_START}' or 1), float('${MEM_CP_END}' or 0)
+core_pct=$(python3 -c "
+s,e = float('${MEM_CORE_START}' or 1), float('${MEM_CORE_END}' or 0)
 print(int((e-s)/s*100) if s>0 else 0)
 " 2>/dev/null || echo 0)
 
 info "Report saved to: $REPORT_FILE"
 
 echo ""
-if [ "${cp_pct:-0}" -gt "$LEAK_THRESHOLD" ]; then
-    echo -e "${RED}${BOLD}TC10 FAILED${NC}: CP memory grew by ${cp_pct}% (> ${LEAK_THRESHOLD}% threshold)"
-elif [ "${cp_pct:-0}" -gt "$WARN_THRESHOLD" ]; then
-    echo -e "${YELLOW}${BOLD}TC10 WARNING${NC}: CP memory grew by ${cp_pct}% (> ${WARN_THRESHOLD}% — monitor)"
+if [ "${core_pct:-0}" -gt "$LEAK_THRESHOLD" ]; then
+    echo -e "${RED}${BOLD}TC10 FAILED${NC}: Core memory grew by ${core_pct}% (> ${LEAK_THRESHOLD}% threshold)"
+elif [ "${core_pct:-0}" -gt "$WARN_THRESHOLD" ]; then
+    echo -e "${YELLOW}${BOLD}TC10 WARNING${NC}: Core memory grew by ${core_pct}% (> ${WARN_THRESHOLD}% — monitor)"
 else
-    echo -e "${GREEN}${BOLD}TC10 PASSED${NC}: Memory growth within acceptable limits (CP: ${cp_growth})"
+    echo -e "${GREEN}${BOLD}TC10 PASSED${NC}: Memory growth within acceptable limits (Core: ${core_growth})"
 fi

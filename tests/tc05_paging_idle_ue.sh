@@ -14,10 +14,10 @@ IMSI="$DEFAULT_IMSI"
 # Step 1: Register UE and establish PDU session
 info "Registering UE..."
 kill_all_ues
-docker exec -d open5gs-ueransim ./nr-ue -c ./config/ue.yaml
+"${UERANSIM_DIR}/nr-ue" -c "${UE_CONFIG_DIR}/ue.yaml" > "${UE_CONFIG_DIR}/ue.log" 2>&1 &
 sleep 15
 
-status=$(docker exec open5gs-ueransim ./nr-cli "$IMSI" -e "status" 2>/dev/null)
+status=$("${UERANSIM_DIR}/nr-cli" "$IMSI" -e "status" 2>/dev/null)
 if ! echo "$status" | grep -q "RM-REGISTERED"; then
     fail "UE registration failed, aborting"
     exit 1
@@ -25,11 +25,11 @@ fi
 pass "UE registered"
 
 # Step 2: Confirm PDU session and get UE IP
-ps_info=$(docker exec open5gs-ueransim ./nr-cli "$IMSI" -e "ps-list" 2>/dev/null)
+ps_info=$("${UERANSIM_DIR}/nr-cli" "$IMSI" -e "ps-list" 2>/dev/null)
 info "PDU sessions:"
 echo "$ps_info"
 
-UE_IP=$(docker exec open5gs-ueransim ip addr show uesimtun0 2>/dev/null | grep "inet " | awk '{print $2}' | cut -d/ -f1)
+UE_IP=$(ip addr show uesimtun0 2>/dev/null | grep "inet " | awk '{print $2}' | cut -d/ -f1)
 if [ -n "$UE_IP" ]; then
     pass "UE IP on uesimtun0: ${UE_IP}"
 else
@@ -42,7 +42,7 @@ fi
 info "Waiting for UE to enter CM-IDLE state (up to 90s)..."
 idle=false
 for attempt in $(seq 1 18); do
-    cm_state=$(docker exec open5gs-ueransim ./nr-cli "$IMSI" -e "status" 2>/dev/null | grep "cm-state" | awk '{print $2}')
+    cm_state=$("${UERANSIM_DIR}/nr-cli" "$IMSI" -e "status" 2>/dev/null | grep "cm-state" | awk '{print $2}')
     if [ "$cm_state" = "CM-IDLE" ]; then
         idle=true
         pass "UE entered CM-IDLE after $((attempt * 5))s"
@@ -60,12 +60,12 @@ fi
 if [ -n "$UE_IP" ]; then
     info "Sending downlink ping to UE IP ${UE_IP} (triggers paging)..."
     # Record AMF log position before ping
-    amf_lines=$(docker exec open5gs-cp wc -l /var/log/open5gs/amf.log 2>/dev/null | awk '{print $1}')
-    docker exec open5gs-upf ping -c 3 -W 3 "$UE_IP" 2>/dev/null || true
+    amf_lines=$(wc -l "${LOG_DIR}/amf.log" 2>/dev/null | awk '{print $1}')
+    ping -c 3 -W 3 "$UE_IP" 2>/dev/null || true
     sleep 5
 
     # Check AMF logs for paging
-    amf_new_logs=$(docker exec open5gs-cp tail -n +$((amf_lines + 1)) /var/log/open5gs/amf.log 2>/dev/null)
+    amf_new_logs=$(tail -n +$((amf_lines + 1)) "${LOG_DIR}/amf.log" 2>/dev/null)
     if echo "$amf_new_logs" | grep -qi "paging\|Paging"; then
         pass "AMF sent Paging message (detected in logs)"
         echo "$amf_new_logs" | grep -i "paging" | tail -3
@@ -74,7 +74,7 @@ if [ -n "$UE_IP" ]; then
     fi
 
     # Check if UE transitioned back to CM-CONNECTED
-    cm_state=$(docker exec open5gs-ueransim ./nr-cli "$IMSI" -e "status" 2>/dev/null | grep "cm-state" | awk '{print $2}')
+    cm_state=$("${UERANSIM_DIR}/nr-cli" "$IMSI" -e "status" 2>/dev/null | grep "cm-state" | awk '{print $2}')
     if [ "$cm_state" = "CM-CONNECTED" ]; then
         pass "UE transitioned to CM-CONNECTED (paging success)"
     else
@@ -85,7 +85,7 @@ else
 fi
 
 # Step 5: Verify UE still functional after paging
-status=$(docker exec open5gs-ueransim ./nr-cli "$IMSI" -e "status" 2>/dev/null)
+status=$("${UERANSIM_DIR}/nr-cli" "$IMSI" -e "status" 2>/dev/null)
 if echo "$status" | grep -q "RM-REGISTERED"; then
     pass "UE remains registered after paging test"
 else

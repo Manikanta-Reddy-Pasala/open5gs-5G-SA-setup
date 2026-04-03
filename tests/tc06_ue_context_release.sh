@@ -14,10 +14,10 @@ IMSI="$DEFAULT_IMSI"
 # Step 1: Register UE
 info "Registering UE..."
 kill_all_ues
-docker exec -d open5gs-ueransim ./nr-ue -c ./config/ue.yaml
+"${UERANSIM_DIR}/nr-ue" -c "${UE_CONFIG_DIR}/ue.yaml" > "${UE_CONFIG_DIR}/ue.log" 2>&1 &
 sleep 12
 
-status=$(docker exec open5gs-ueransim ./nr-cli "$IMSI" -e "status" 2>/dev/null)
+status=$("${UERANSIM_DIR}/nr-cli" "$IMSI" -e "status" 2>/dev/null)
 if ! echo "$status" | grep -q "RM-REGISTERED"; then
     fail "UE registration failed, aborting"
     exit 1
@@ -25,16 +25,16 @@ fi
 pass "UE registered and CM-CONNECTED"
 
 # Record initial AMF log line count for later comparison
-amf_lines_before=$(docker exec open5gs-cp wc -l /var/log/open5gs/amf.log 2>/dev/null | awk '{print $1}')
+amf_lines_before=$(wc -l "${LOG_DIR}/amf.log" 2>/dev/null | awk '{print $1}')
 
 # Step 2: Simulate RLF by killing the UE process (ungraceful disconnect)
 info "Simulating Radio Link Failure (killing UE process)..."
-docker exec open5gs-ueransim pkill -9 -f "nr-ue" 2>/dev/null
+pkill -9 -f "nr-ue" 2>/dev/null
 sleep 5
 
 # Step 3: Check AMF logs for UE context release
 info "Checking AMF logs for UE Context Release..."
-amf_new_logs=$(docker exec open5gs-cp tail -n +$((amf_lines_before + 1)) /var/log/open5gs/amf.log 2>/dev/null)
+amf_new_logs=$(tail -n +$((amf_lines_before + 1)) "${LOG_DIR}/amf.log" 2>/dev/null)
 
 if echo "$amf_new_logs" | grep -qi "context release\|UE_CONTEXT_RELEASE\|RAN-UE-NGAP-ID\|UeContextRelease"; then
     pass "AMF processed UE Context Release"
@@ -53,10 +53,10 @@ fi
 # Step 5: Graceful deregister test
 info ""
 info "=== Graceful UE Context Release (deregister) ==="
-docker exec -d open5gs-ueransim ./nr-ue -c ./config/ue.yaml
+"${UERANSIM_DIR}/nr-ue" -c "${UE_CONFIG_DIR}/ue.yaml" > "${UE_CONFIG_DIR}/ue.log" 2>&1 &
 sleep 12
 
-status=$(docker exec open5gs-ueransim ./nr-cli "$IMSI" -e "status" 2>/dev/null)
+status=$("${UERANSIM_DIR}/nr-cli" "$IMSI" -e "status" 2>/dev/null)
 if echo "$status" | grep -q "RM-REGISTERED"; then
     pass "UE re-registered for graceful release test"
 else
@@ -65,13 +65,13 @@ else
     exit 1
 fi
 
-amf_lines_before=$(docker exec open5gs-cp wc -l /var/log/open5gs/amf.log 2>/dev/null | awk '{print $1}')
+amf_lines_before=$(wc -l "${LOG_DIR}/amf.log" 2>/dev/null | awk '{print $1}')
 
 info "Sending deregister command (graceful UE-initiated release)..."
-docker exec open5gs-ueransim ./nr-cli "$IMSI" -e "deregister normal" 2>/dev/null
+"${UERANSIM_DIR}/nr-cli" "$IMSI" -e "deregister normal" 2>/dev/null
 sleep 5
 
-amf_new_logs=$(docker exec open5gs-cp tail -n +$((amf_lines_before + 1)) /var/log/open5gs/amf.log 2>/dev/null)
+amf_new_logs=$(tail -n +$((amf_lines_before + 1)) "${LOG_DIR}/amf.log" 2>/dev/null)
 
 if echo "$amf_new_logs" | grep -qi "deregistration\|Deregist"; then
     pass "AMF processed UE Deregistration"
@@ -80,7 +80,7 @@ else
     info "Checking UE state directly..."
 fi
 
-status=$(docker exec open5gs-ueransim ./nr-cli "$IMSI" -e "status" 2>&1)
+status=$("${UERANSIM_DIR}/nr-cli" "$IMSI" -e "status" 2>&1)
 if echo "$status" | grep -q "RM-DEREGISTERED"; then
     pass "UE is RM-DEREGISTERED (context released)"
 elif echo "$status" | grep -qi "could not connect\|not found\|No node\|ERROR"; then

@@ -18,7 +18,7 @@ K="$BASE_K"
 
 # Step 1: Check if 'ims' DNN is configured in SMF
 info "Checking if 'ims' DNN is configured in SMF..."
-if docker exec open5gs-cp grep -q '"ims"\|ims:' /etc/open5gs/smf.yaml 2>/dev/null; then
+if grep -q '"ims"\|ims:' "${INST_CONFIG}/smf.yaml" 2>/dev/null; then
     pass "'ims' DNN found in SMF config"
 else
     warn "'ims' DNN not found in SMF config."
@@ -35,16 +35,16 @@ pass "Subscriber ${IMSI} provisioned with dual-DNN"
 info "Generating UE config with two PDU sessions..."
 TMPDIR=$(mktemp -d)
 generate_ue_config "$SUPI" "$K" "$OPC" "${TMPDIR}/ue_multi_apn.yaml" "internet,ims"
-docker cp "${TMPDIR}/ue_multi_apn.yaml" open5gs-ueransim:/ueransim/config/ue_multi_apn.yaml
+cp "${TMPDIR}/ue_multi_apn.yaml" "${UE_CONFIG_DIR}/ue_multi_apn.yaml"
 
 # Step 4: Launch UE
 kill_all_ues
 info "Launching UE with multi-APN config..."
-docker exec -d open5gs-ueransim ./nr-ue -c ./config/ue_multi_apn.yaml
+"${UERANSIM_DIR}/nr-ue" -c "${UE_CONFIG_DIR}/ue_multi_apn.yaml" > "${UE_CONFIG_DIR}/ue_multi_apn.log" 2>&1 &
 sleep 18
 
 # Step 5: Check registration
-status=$(docker exec open5gs-ueransim ./nr-cli "$IMSI" -e "status" 2>/dev/null)
+status=$("${UERANSIM_DIR}/nr-cli" "$IMSI" -e "status" 2>/dev/null)
 if echo "$status" | grep -q "RM-REGISTERED"; then
     pass "UE registered: ${IMSI}"
 else
@@ -53,7 +53,7 @@ else
 fi
 
 # Step 6: Check PDU sessions
-ps_list=$(docker exec open5gs-ueransim ./nr-cli "$IMSI" -e "ps-list" 2>/dev/null)
+ps_list=$("${UERANSIM_DIR}/nr-cli" "$IMSI" -e "ps-list" 2>/dev/null)
 echo ""
 info "PDU Session list:"
 echo "$ps_list"
@@ -75,9 +75,9 @@ if echo "$ps_list" | grep -q "ims"; then
 else
     warn "PDU session on DNN 'ims' not established"
     info "Attempting manual PDU session establishment..."
-    docker exec open5gs-ueransim ./nr-cli "$IMSI" -e "ps-establish IPv4 --dnn ims --sst 3 --sd 198153" 2>/dev/null
+    "${UERANSIM_DIR}/nr-cli" "$IMSI" -e "ps-establish IPv4 --dnn ims --sst 3 --sd 198153" 2>/dev/null
     sleep 5
-    ps_list2=$(docker exec open5gs-ueransim ./nr-cli "$IMSI" -e "ps-list" 2>/dev/null)
+    ps_list2=$("${UERANSIM_DIR}/nr-cli" "$IMSI" -e "ps-list" 2>/dev/null)
     if echo "$ps_list2" | grep -q "ims"; then
         pass "PDU session on DNN 'ims' established (manual)"
         ims_session=true
@@ -88,7 +88,7 @@ else
 fi
 
 # Step 7: Check TUN interfaces
-tun_list=$(docker exec open5gs-ueransim ip addr show 2>/dev/null | grep "uesimtun")
+tun_list=$(ip addr show 2>/dev/null | grep "uesimtun")
 # grep -c exits 1 on 0 matches (producing "0" output) — "|| echo 0" would then
 # also run, creating "0\n0". Use explicit test instead.
 tun_count=0

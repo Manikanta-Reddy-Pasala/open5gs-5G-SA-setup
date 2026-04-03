@@ -48,7 +48,7 @@ stop_instance() {
     fi
 
     # Load saved metadata for IP addresses
-    local cp_ip="" upf_ip="" ue_subnet="" parent_iface="" host_prefix="" tun_dev="" container_name=""
+    local cp_ip="" upf_ip="" ue_subnet="" parent_iface="" host_prefix="" tun_dev="" container_name="" public_ip="" public_iface=""
     if [ -f "$metadata" ]; then
         source "$metadata"
         cp_ip="${CP_IP:-}"
@@ -58,6 +58,8 @@ stop_instance() {
         host_prefix="${HOST_PREFIX:-}"
         tun_dev="${TUN_DEV:-}"
         container_name="${CONTAINER_NAME:-}"
+        public_ip="${PUBLIC_IP:-}"
+        public_iface="${PUBLIC_IFACE:-}"
     else
         warn "No metadata.env for ${name} — cannot clean up networking"
     fi
@@ -79,6 +81,19 @@ stop_instance() {
             iptables -t nat -D POSTROUTING -s "${ue_subnet}" -j MASQUERADE 2>/dev/null || true
             iptables -D FORWARD -s "${ue_subnet}" -j ACCEPT 2>/dev/null || true
             iptables -D FORWARD -d "${ue_subnet}" -j ACCEPT 2>/dev/null || true
+        fi
+
+        # Cleanup SCTP/GTP-U DNAT rules for external gNB access
+        if [ -n "$public_ip" ] && [ -n "$public_iface" ] && [ -n "$cp_ip" ]; then
+            iptables -t nat -D PREROUTING -i "$public_iface" -p sctp --dport "${NGAP_PORT}" \
+                -j DNAT --to-destination "${cp_ip}:${NGAP_PORT}" 2>/dev/null || true
+            iptables -t nat -D PREROUTING -i "$public_iface" -p udp --dport "${GTPU_PORT}" \
+                -j DNAT --to-destination "${upf_ip}:${GTPU_PORT}" 2>/dev/null || true
+            iptables -D FORWARD -p sctp --dport "${NGAP_PORT}" -d "${cp_ip}" -j ACCEPT 2>/dev/null || true
+            iptables -D FORWARD -p udp --dport "${GTPU_PORT}" -d "${upf_ip}" -j ACCEPT 2>/dev/null || true
+            iptables -t nat -D OUTPUT -p sctp -d "${public_ip}" --dport "${NGAP_PORT}" \
+                -j DNAT --to-destination "${cp_ip}:${NGAP_PORT}" 2>/dev/null || true
+            log "Removed DNAT rules for ${public_ip}"
         fi
 
         # Remove CP and UPF secondary IPs from host interface

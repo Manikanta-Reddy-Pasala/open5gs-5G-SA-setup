@@ -15,10 +15,10 @@ IMSI="$DEFAULT_IMSI"
 echo ""
 info "=== Phase 1: Graceful NG Reset (UERANSIM container restart) ==="
 
-docker exec -d open5gs-ueransim ./nr-ue -c ./config/ue.yaml
+"${UERANSIM_DIR}/nr-ue" -c "${UE_CONFIG_DIR}/ue.yaml" > "${UE_CONFIG_DIR}/ue.log" 2>&1 &
 sleep 12
 
-status=$(docker exec open5gs-ueransim ./nr-cli "$IMSI" -e "status" 2>/dev/null)
+status=$("${UERANSIM_DIR}/nr-cli" "$IMSI" -e "status" 2>/dev/null)
 if echo "$status" | grep -q "RM-REGISTERED"; then
     pass "UE registered before NG Reset"
 else
@@ -27,15 +27,15 @@ fi
 kill_all_ues
 
 # Record AMF log position
-amf_lines=$(docker exec open5gs-cp wc -l /var/log/open5gs/amf.log 2>/dev/null | awk '{print $1}')
+amf_lines=$(wc -l "${LOG_DIR}/amf.log" 2>/dev/null | awk '{print $1}')
 
-# Restart UERANSIM container (simulates graceful gNB restart / NG Reset)
+# Restart UERANSIM (simulates graceful gNB restart / NG Reset)
 info "Restarting UERANSIM (graceful NG Reset)..."
-docker restart open5gs-ueransim >/dev/null 2>&1
+reset_ueransim
 sleep 12
 
 # Check AMF logs for SCTP/NG association events
-amf_new=$(docker exec open5gs-cp tail -n +$((amf_lines + 1)) /var/log/open5gs/amf.log 2>/dev/null)
+amf_new=$(tail -n +$((amf_lines + 1)) "${LOG_DIR}/amf.log" 2>/dev/null)
 if echo "$amf_new" | grep -qi "SCTP\|NG Setup\|associate\|disconnect\|ran-ue\|gnb"; then
     pass "AMF detected SCTP/NG state change during restart"
     echo "$amf_new" | grep -i "SCTP\|NG Setup\|associate\|gnb" | tail -3
@@ -44,7 +44,7 @@ else
 fi
 
 # Verify gNB re-establishes NG Setup
-gnb_logs=$(docker logs open5gs-ueransim --tail 30 2>&1)
+gnb_logs=$(tail -30 "${UE_CONFIG_DIR}/gnb.log" 2>&1)
 if echo "$gnb_logs" | grep -qi "NG Setup\|ngSetup\|NGAP\|AMF"; then
     pass "gNB re-established NG Setup after restart"
 else
@@ -53,9 +53,9 @@ else
 fi
 
 # Register UE to confirm connectivity
-docker exec -d open5gs-ueransim ./nr-ue -c ./config/ue.yaml
+"${UERANSIM_DIR}/nr-ue" -c "${UE_CONFIG_DIR}/ue.yaml" > "${UE_CONFIG_DIR}/ue.log" 2>&1 &
 sleep 12
-status=$(docker exec open5gs-ueransim ./nr-cli "$IMSI" -e "status" 2>/dev/null)
+status=$("${UERANSIM_DIR}/nr-cli" "$IMSI" -e "status" 2>/dev/null)
 if echo "$status" | grep -q "RM-REGISTERED"; then
     pass "Phase 1: UE registered after graceful NG Reset"
 else
@@ -68,25 +68,25 @@ echo ""
 info "=== Phase 2: Forced NG Reset (abrupt gNB kill) ==="
 
 # Start UE first
-docker exec -d open5gs-ueransim ./nr-ue -c ./config/ue.yaml
+"${UERANSIM_DIR}/nr-ue" -c "${UE_CONFIG_DIR}/ue.yaml" > "${UE_CONFIG_DIR}/ue.log" 2>&1 &
 sleep 10
 
 # Kill nr-gnb process abruptly (simulate gNB crash without SCTP FIN)
 info "Killing nr-gnb process abruptly..."
-docker exec open5gs-ueransim pkill -9 -f "nr-gnb" 2>/dev/null || true
-docker exec open5gs-ueransim pkill -9 -f "nr-ue" 2>/dev/null || true
+pkill -9 -f "nr-gnb" 2>/dev/null || true
+pkill -9 -f "nr-ue" 2>/dev/null || true
 sleep 5
 
 # Check AMF logs for detection of abrupt disconnect
-amf_lines=$(docker exec open5gs-cp wc -l /var/log/open5gs/amf.log 2>/dev/null | awk '{print $1}')
+amf_lines=$(wc -l "${LOG_DIR}/amf.log" 2>/dev/null | awk '{print $1}')
 
 # Restart gNB
 info "Restarting gNB after forced kill..."
-docker exec -d open5gs-ueransim ./nr-gnb -c ./config/gnb.yaml 2>/dev/null &
+"${UERANSIM_DIR}/nr-gnb" -c "${UE_CONFIG_DIR}/gnb.yaml" > "${UE_CONFIG_DIR}/gnb.log" 2>&1 &
 sleep 10
 
 # Check if AMF detected disconnect / ran UE cleanup
-amf_new=$(docker exec open5gs-cp tail -n +$((amf_lines + 1)) /var/log/open5gs/amf.log 2>/dev/null)
+amf_new=$(tail -n +$((amf_lines + 1)) "${LOG_DIR}/amf.log" 2>/dev/null)
 if echo "$amf_new" | grep -qi "SCTP\|abort\|close\|remove\|ran-ue"; then
     pass "AMF detected forced gNB disconnect"
 else
@@ -94,12 +94,12 @@ else
 fi
 
 # Register UE with restarted gNB
-docker exec open5gs-ueransim pkill -f "nr-gnb" 2>/dev/null || true
-docker restart open5gs-ueransim >/dev/null 2>&1
+pkill -f "nr-gnb" 2>/dev/null || true
+reset_ueransim
 sleep 10
-docker exec -d open5gs-ueransim ./nr-ue -c ./config/ue.yaml
+"${UERANSIM_DIR}/nr-ue" -c "${UE_CONFIG_DIR}/ue.yaml" > "${UE_CONFIG_DIR}/ue.log" 2>&1 &
 sleep 12
-status=$(docker exec open5gs-ueransim ./nr-cli "$IMSI" -e "status" 2>/dev/null)
+status=$("${UERANSIM_DIR}/nr-cli" "$IMSI" -e "status" 2>/dev/null)
 if echo "$status" | grep -q "RM-REGISTERED"; then
     pass "Phase 2: UE registered after forced NG Reset"
 else

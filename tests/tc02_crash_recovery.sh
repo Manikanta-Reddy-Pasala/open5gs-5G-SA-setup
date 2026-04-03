@@ -16,10 +16,10 @@ echo ""
 info "=== Test A: UPF Crash & Recovery ==="
 
 # Register baseline UE
-docker exec -d open5gs-ueransim ./nr-ue -c ./config/ue.yaml
+"${UERANSIM_DIR}/nr-ue" -c "${UE_CONFIG_DIR}/ue.yaml" > "${UE_CONFIG_DIR}/ue.log" 2>&1 &
 sleep 12
 
-status=$(docker exec open5gs-ueransim ./nr-cli "$IMSI" -e "status" 2>/dev/null)
+status=$("${UERANSIM_DIR}/nr-cli" "$IMSI" -e "status" 2>/dev/null)
 if echo "$status" | grep -q "RM-REGISTERED"; then
     pass "Baseline UE registered"
 else
@@ -31,16 +31,16 @@ fi
 # Kill and restart UPF
 info "Restarting UPF (simulating crash)..."
 kill_all_ues
-docker restart open5gs-upf >/dev/null 2>&1
+docker restart "$CONTAINER_NAME" >/dev/null 2>&1
 sleep 15
 
 # Restart gNB to clear stale state, then re-register
-docker restart open5gs-ueransim >/dev/null 2>&1
+reset_ueransim
 sleep 10
-docker exec -d open5gs-ueransim ./nr-ue -c ./config/ue.yaml
+"${UERANSIM_DIR}/nr-ue" -c "${UE_CONFIG_DIR}/ue.yaml" > "${UE_CONFIG_DIR}/ue.log" 2>&1 &
 sleep 12
 
-status=$(docker exec open5gs-ueransim ./nr-cli "$IMSI" -e "status" 2>/dev/null)
+status=$("${UERANSIM_DIR}/nr-cli" "$IMSI" -e "status" 2>/dev/null)
 if echo "$status" | grep -q "RM-REGISTERED"; then
     pass "Test A: UE re-registered after UPF restart"
 else
@@ -52,8 +52,8 @@ kill_all_ues
 echo ""
 info "=== Test B: Control Plane (CP) Crash & Recovery ==="
 
-info "Restarting open5gs-cp (simulating CP crash)..."
-docker restart open5gs-cp >/dev/null 2>&1
+info "Restarting ${CONTAINER_NAME} (simulating CP crash)..."
+docker restart "$CONTAINER_NAME" >/dev/null 2>&1
 
 # Wait for CP to become healthy (NRF SBI check)
 info "Waiting for CP to recover (up to 120s)..."
@@ -64,7 +64,7 @@ else
 fi
 
 # Restart UERANSIM to reconnect gNB after CP restart
-docker restart open5gs-ueransim >/dev/null 2>&1
+reset_ueransim
 if wait_gnb_connected 60; then
     info "gNB reconnected after CP restart"
 else
@@ -72,10 +72,10 @@ else
 fi
 sleep 5
 
-docker exec -d open5gs-ueransim ./nr-ue -c ./config/ue.yaml
+"${UERANSIM_DIR}/nr-ue" -c "${UE_CONFIG_DIR}/ue.yaml" > "${UE_CONFIG_DIR}/ue.log" 2>&1 &
 sleep 20
 
-status=$(docker exec open5gs-ueransim ./nr-cli "$IMSI" -e "status" 2>/dev/null)
+status=$("${UERANSIM_DIR}/nr-cli" "$IMSI" -e "status" 2>/dev/null)
 if echo "$status" | grep -q "RM-REGISTERED"; then
     pass "Test B: UE re-registered after CP restart"
 else
@@ -87,30 +87,30 @@ kill_all_ues
 echo ""
 info "=== Test C: MongoDB Crash & Recovery ==="
 
-info "Restarting open5gs-mongodb (simulating DB crash)..."
-docker restart open5gs-mongodb >/dev/null 2>&1
+info "Restarting mongod (simulating DB crash)..."
+systemctl restart mongod >/dev/null 2>&1
 sleep 15
 
 # CP should reconnect to MongoDB automatically; also restart CP to force reconnect
 info "Restarting CP after MongoDB recovery..."
-docker restart open5gs-cp >/dev/null 2>&1
+docker restart "$CONTAINER_NAME" >/dev/null 2>&1
 if wait_cp_healthy 120; then
     pass "CP healthy after MongoDB restart"
 else
     fail "CP unhealthy after MongoDB restart"
 fi
 
-docker restart open5gs-ueransim >/dev/null 2>&1
+reset_ueransim
 if wait_gnb_connected 60; then
     info "gNB reconnected after MongoDB+CP restart"
 else
     warn "gNB did not show NG Setup within 60s"
 fi
 sleep 5
-docker exec -d open5gs-ueransim ./nr-ue -c ./config/ue.yaml
+"${UERANSIM_DIR}/nr-ue" -c "${UE_CONFIG_DIR}/ue.yaml" > "${UE_CONFIG_DIR}/ue.log" 2>&1 &
 sleep 20
 
-status=$(docker exec open5gs-ueransim ./nr-cli "$IMSI" -e "status" 2>/dev/null)
+status=$("${UERANSIM_DIR}/nr-cli" "$IMSI" -e "status" 2>/dev/null)
 if echo "$status" | grep -q "RM-REGISTERED"; then
     pass "Test C: UE re-registered after MongoDB restart"
 else

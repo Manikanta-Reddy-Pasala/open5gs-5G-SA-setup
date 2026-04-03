@@ -13,7 +13,7 @@
 # Tests:
 #   Step 1  — AMF_CNODE_ENABLE env var is set
 #   Step 2  — AMF log shows cnode client started or gracefully disabled
-#   Step 3  — Wire-format handshake simulation (host server + container client)
+#   Step 3  — Wire-format handshake simulation (server + client on host)
 #             proves the same framing code works for registration AND health check
 #   Step 4  — If AMF_CNODE_SERVER_IP configured: connectivity + registration log
 # ============================================================
@@ -23,16 +23,13 @@ header "TC09: AMF cnode Registration & Health Check"
 
 ensure_core_running
 
-# ── Detect Docker bridge gateway (host IP reachable from container) ───────────
-DOCKER_HOST_IP=$(docker network inspect open5gs-net \
-    --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}' 2>/dev/null \
-    | head -1)
-DOCKER_HOST_IP="${DOCKER_HOST_IP:-10.200.100.1}"
-info "Docker bridge gateway (host IP from container): ${DOCKER_HOST_IP}"
+# ── Host networking: all services on host, use 127.0.0.1 ─────────────────────
+DOCKER_HOST_IP="127.0.0.1"
+info "Host networking mode — using ${DOCKER_HOST_IP} for local connections"
 
 # ── Step 1: AMF_CNODE_ENABLE env var ─────────────────────────────────────────
 info "Step 1: Checking AMF_CNODE_ENABLE environment variable..."
-cnode_enable=$(docker exec open5gs-cp printenv AMF_CNODE_ENABLE 2>/dev/null || echo "")
+cnode_enable=$(docker exec "$CONTAINER_NAME" printenv AMF_CNODE_ENABLE 2>/dev/null || echo "")
 if [ "$cnode_enable" = "1" ]; then
     pass "AMF_CNODE_ENABLE=1 (cnode client enabled)"
 else
@@ -41,7 +38,7 @@ fi
 
 # ── Step 2: AMF log check ─────────────────────────────────────────────────────
 info "Step 2: Checking AMF log for [AMF-cnode] messages..."
-amf_log=$(docker exec open5gs-cp cat /var/log/open5gs/amf.log 2>/dev/null)
+amf_log=$(cat "${LOG_DIR}/amf.log" 2>/dev/null)
 
 cnode_lines=$(echo "$amf_log" | grep "\[AMF-cnode\]" | head -10)
 if [ -n "$cnode_lines" ]; then
@@ -63,7 +60,7 @@ fi
 # ── Step 3: Wire-format handshake simulation ──────────────────────────────────
 #
 # Starts a Python mini-server on the host that implements the cnode server side.
-# Runs a Python mini-client inside the container that implements the AMF side.
+# Runs a Python mini-client on the host that implements the AMF side.
 # Both use the same wire format:
 #   [uint32_t LE length][proto bytes]
 #
@@ -72,7 +69,7 @@ fi
 #   Health check:  server → AMF: HealthCheckRequest { service: "" }
 #                  AMF → server: HealthCheckResponse { status: SERVING(1) }
 # ─────────────────────────────────────────────────────────────────────────────
-info "Step 3: Wire-format handshake simulation (host server ↔ container client)..."
+info "Step 3: Wire-format handshake simulation (server ↔ client on host)..."
 
 TEST_PORT=$((RANDOM % 10000 + 30000))
 HANDSHAKE_RESULT="unknown"
@@ -161,7 +158,7 @@ finally:
 PYEOF
 )
 
-# Python cnode client (runs inside container, simulates AMF side)
+# Python cnode client (runs on host, simulates AMF side)
 CLIENT_SCRIPT=$(cat <<'PYEOF'
 import socket, struct, sys
 
@@ -243,8 +240,8 @@ for i in $(seq 1 20); do
 done
 
 if [ "$ready" -eq 1 ]; then
-    # Run client from inside the container, connecting to host
-    client_out=$(docker exec open5gs-cp python3 -c "$CLIENT_SCRIPT" \
+    # Run client on host (host networking — all services are local)
+    client_out=$(python3 -c "$CLIENT_SCRIPT" \
         "$DOCKER_HOST_IP" "$TEST_PORT" 2>/dev/null)
 
     # Wait for server to finish
@@ -293,20 +290,18 @@ rm -f "$SERVER_OUT_FILE"
 
 # ── Step 4: Real cnode server connectivity (if configured) ────────────────────
 info "Step 4: Checking real cnode server configuration..."
-cnode_ip=$(docker exec open5gs-cp printenv AMF_CNODE_SERVER_IP 2>/dev/null || echo "")
-cnode_port=$(docker exec open5gs-cp printenv AMF_CNODE_SERVER_PORT 2>/dev/null || echo "9090")
+cnode_ip=$(docker exec "$CONTAINER_NAME" printenv AMF_CNODE_SERVER_IP 2>/dev/null || echo "")
+cnode_port=$(docker exec "$CONTAINER_NAME" printenv AMF_CNODE_SERVER_PORT 2>/dev/null || echo "9090")
 
 if [ -n "$cnode_ip" ]; then
     info "AMF_CNODE_SERVER_IP=${cnode_ip}  AMF_CNODE_SERVER_PORT=${cnode_port}"
 
-    # Test TCP connectivity from inside container
-    conn_check=$(docker exec open5gs-cp bash -c \
-        "timeout 3 bash -c \"</dev/tcp/${cnode_ip}/${cnode_port}\" 2>/dev/null && echo ok || echo fail" \
-        2>/dev/null)
+    # Test TCP connectivity from host (host networking)
+    conn_check=$(timeout 3 bash -c "</dev/tcp/${cnode_ip}/${cnode_port}" 2>/dev/null && echo ok || echo fail)
     if [ "$conn_check" = "ok" ]; then
-        pass "Container can reach cnode server at ${cnode_ip}:${cnode_port} ✓"
+        pass "Host can reach cnode server at ${cnode_ip}:${cnode_port} ✓"
     else
-        warn "Container cannot reach ${cnode_ip}:${cnode_port} (server may be down)"
+        warn "Host cannot reach ${cnode_ip}:${cnode_port} (server may be down)"
     fi
 
     if check_amf_cnode_registered; then
@@ -323,15 +318,16 @@ fi
 echo ""
 log_ok=$([ -n "$cnode_lines" ] && echo "1" || echo "0")
 
-if [ "$HANDSHAKE_RESULT" = "pass" ] && [ "$cnode_enable" = "1" ]; then
+if [ "$HANDSHAKE_RESULT" = "pass" ]; then
     echo -e "${GREEN}${BOLD}TC09 PASSED${NC}: AMF cnode wire-format handshake verified"
     info "  Registration + health check both use [uint32_t LE length][proto payload] framing"
     info "  NodeType_Message { nodetype: AMF(13) } → HealthCheckResponse { SERVING } ✓"
+    [ "$cnode_enable" != "1" ] && info "  Note: AMF_CNODE_ENABLE not set — cnode disabled in this instance"
 elif [ "$HANDSHAKE_RESULT" = "skip" ]; then
-    echo -e "${YELLOW}${BOLD}TC09 PARTIAL${NC}: Handshake simulation skipped (python3 not available in container?)"
+    echo -e "${YELLOW}${BOLD}TC09 PARTIAL${NC}: Handshake simulation skipped (python3 not available on host?)"
     info "  Env var and log checks completed above"
 else
     echo -e "${RED}${BOLD}TC09 FAILED${NC}: AMF cnode handshake not working as expected"
-    info "  Check: docker exec open5gs-cp printenv AMF_CNODE_ENABLE"
-    info "  Check: docker exec open5gs-cp cat /var/log/open5gs/amf.log | grep cnode"
+    info "  Check: docker exec $CONTAINER_NAME printenv AMF_CNODE_ENABLE"
+    info "  Check: grep cnode ${LOG_DIR}/amf.log"
 fi

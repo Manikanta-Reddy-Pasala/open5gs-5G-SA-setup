@@ -11,10 +11,10 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common.sh"
 
-LOG_DIR="$SCRIPT_DIR/logs"
-mkdir -p "$LOG_DIR"
+TEST_LOG_DIR="$SCRIPT_DIR/logs"
+mkdir -p "$TEST_LOG_DIR"
 TIMESTAMP=$(date '+%Y%m%d_%H%M%S')
-SUMMARY_LOG="$LOG_DIR/run_${TIMESTAMP}.log"
+SUMMARY_LOG="$TEST_LOG_DIR/run_${TIMESTAMP}.log"
 
 # Test registry
 declare -A TC_NAME
@@ -67,13 +67,13 @@ fi
 
 header "open5GS Test Suite"
 echo "  Running ${#TESTS_TO_RUN[@]} test(s)"
-echo "  Log: $SUMMARY_LOG"
+echo "  Log: $TEST_LOG_DIR"
 echo ""
 
 # Verify core is reachable before running tests
-cp_state=$(docker inspect --format='{{.State.Status}}' open5gs-cp 2>/dev/null || echo "not found")
+cp_state=$(docker inspect --format='{{.State.Status}}' "$CONTAINER_NAME" 2>/dev/null || echo "not found")
 if [ "$cp_state" != "running" ]; then
-    echo -e "${RED}ERROR: open5gs-cp is not running. Start with: ./open5gs.sh start --ueransim${NC}"
+    echo -e "${RED}ERROR: ${CONTAINER_NAME} is not running. Start with: ./scripts/start.sh${NC}"
     exit 1
 fi
 
@@ -83,7 +83,7 @@ for tc_num in "${TESTS_TO_RUN[@]}"; do
     script="${TC_SCRIPT[$tc_num]}"
     name="${TC_NAME[$tc_num]}"
     script_path="$SCRIPT_DIR/$script"
-    tc_log="$LOG_DIR/tc$(printf '%02d' $tc_num)_${TIMESTAMP}.log"
+    tc_log="$TEST_LOG_DIR/tc$(printf '%02d' $tc_num)_${TIMESTAMP}.log"
 
     echo -e "${BOLD}Running TC$(printf '%02d' $tc_num): ${name}${NC}"
 
@@ -144,7 +144,7 @@ done
 
 echo "" | tee -a "$SUMMARY_LOG"
 echo -e "  Total: ${#TESTS_TO_RUN[@]}  |  ${GREEN}Passed: ${passed}${NC}  |  ${RED}Failed: ${failed}${NC}  |  Skipped: ${skipped}" | tee -a "$SUMMARY_LOG"
-echo -e "  Logs saved to: $LOG_DIR/" | tee -a "$SUMMARY_LOG"
+echo -e "  Logs saved to: $TEST_LOG_DIR/" | tee -a "$SUMMARY_LOG"
 echo ""
 
 [ "$failed" -eq 0 ]

@@ -28,8 +28,8 @@ for (( i=0; i<NUM_UES; i++ )); do
     supi_num=$(supi_add "$BASE_SUPI" "$i")
     k=$(hex_add "$BASE_K" "$i")
     generate_ue_config "$supi_num" "$k" "$OPC" "${TMPDIR}/ue${i}.yaml" "internet"
-    docker cp "${TMPDIR}/ue${i}.yaml" open5gs-ueransim:/ueransim/config/ue${i}.yaml
-    docker exec -d open5gs-ueransim ./nr-ue -c ./config/ue${i}.yaml
+    cp "${TMPDIR}/ue${i}.yaml" "${UE_CONFIG_DIR}/ue${i}.yaml"
+    "${UERANSIM_DIR}/nr-ue" -c "${UE_CONFIG_DIR}/ue${i}.yaml" > "${UE_CONFIG_DIR}/ue${i}.log" 2>&1 &
 done
 sleep 18
 
@@ -38,7 +38,7 @@ registered=0
 for (( i=0; i<NUM_UES; i++ )); do
     supi_num=$(supi_add "$BASE_SUPI" "$i")
     imsi="imsi-${supi_num}"
-    status=$(docker exec open5gs-ueransim ./nr-cli "$imsi" -e "status" 2>/dev/null)
+    status=$("${UERANSIM_DIR}/nr-cli" "$imsi" -e "status" 2>/dev/null)
     if echo "$status" | grep -q "RM-REGISTERED"; then
         pass "UE ${imsi}: REGISTERED"
         registered=$((registered + 1))
@@ -57,7 +57,7 @@ info "Deregistering all ${NUM_UES} UEs simultaneously..."
 for (( i=0; i<NUM_UES; i++ )); do
     supi_num=$(supi_add "$BASE_SUPI" "$i")
     imsi="imsi-${supi_num}"
-    docker exec open5gs-ueransim ./nr-cli "$imsi" -e "deregister normal" 2>/dev/null &
+    "${UERANSIM_DIR}/nr-cli" "$imsi" -e "deregister normal" 2>/dev/null &
 done
 wait
 # Wait for NAS deregistration to complete on all UEs
@@ -65,14 +65,14 @@ sleep 15
 
 # Step 5: Verify all deregistered
 # Kill UE processes first so nr-cli sees "could not connect" (clean state)
-docker exec open5gs-ueransim pkill -f "nr-ue" 2>/dev/null || true
+pkill -f "nr-ue" 2>/dev/null || true
 sleep 3
 
 deregistered=0
 for (( i=0; i<NUM_UES; i++ )); do
     supi_num=$(supi_add "$BASE_SUPI" "$i")
     imsi="imsi-${supi_num}"
-    status=$(docker exec open5gs-ueransim ./nr-cli "$imsi" -e "status" 2>&1)
+    status=$("${UERANSIM_DIR}/nr-cli" "$imsi" -e "status" 2>&1)
     if echo "$status" | grep -q "RM-DEREGISTERED"; then
         pass "UE ${imsi}: DEREGISTERED"
         deregistered=$((deregistered + 1))
