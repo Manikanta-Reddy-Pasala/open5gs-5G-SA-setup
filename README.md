@@ -32,10 +32,24 @@ A multi-instance 5G Standalone (SA) core network built from source using [open5G
   │                                                              │
   └──────────────────────────────────────────────────────────────┘
 
-  gNB connects directly to secondary IPs:
-    TRX1 gNB ──► 10.100.0.21:38412 (NGAP)  +  10.100.0.31:2152 (GTP-U)
-    TRX2 gNB ──► 10.100.0.22:38412          +  10.100.0.32:2152
+  gNB connects directly to secondary IPs (local) or via public IP DNAT (remote):
+    Local  gNB ──► 10.100.0.21:38412 (NGAP)  +  10.100.0.31:2152 (GTP-U)
+    Remote gNB ──► <PUBLIC_IP>:38412 (SCTP DNAT → CP IP) + <PUBLIC_IP>:2152 (UDP DNAT → UPF IP)
 ```
+
+### External gNB access (SCTP DNAT)
+
+When CP/UPF IPs are on an internal bridge (not the public interface), `start.sh` **automatically** detects the public IP and adds iptables DNAT rules:
+
+```
+Real Base Station (remote)
+    │
+    ▼  SCTP :38412
+<PUBLIC_IP> ──DNAT──► <CP_IP>:38412  (AMF/NGAP)
+<PUBLIC_IP> ──DNAT──► <UPF_IP>:2152  (UPF/GTP-U)
+```
+
+These rules are cleaned up automatically by `stop.sh --rm`.
 
 ### IP roles
 
@@ -212,6 +226,23 @@ Optional — Other:
 ./scripts/logs.sh --trx-ip 10.100.0.11 upf       # UPF log
 ```
 
+### sctp_test.py — Test SCTP/NGAP connectivity
+
+```bash
+python3 scripts/sctp_test.py <target_ip> [port]
+
+# Examples
+python3 scripts/sctp_test.py 135.181.93.114          # Test via public IP (DNAT)
+python3 scripts/sctp_test.py 10.100.0.15              # Test via internal CP IP
+python3 scripts/sctp_test.py 135.181.93.114 38412     # Explicit port
+```
+
+Tests:
+1. **SCTP INIT handshake** — verifies SCTP association can be established
+2. **NGAP NGSetupRequest** — sends a test NGSetupRequest and checks for AMF response
+
+Requires `pysctp` (`pip install pysctp`).
+
 ---
 
 ## NF Ports
@@ -260,11 +291,12 @@ open5gs-5G-SA-setup/
 │   ├── env.sh                # Shared env vars and helpers
 │   ├── build.sh              # Source compilation + image build
 │   ├── docker.sh             # Runtime image build (standalone)
-│   ├── start.sh              # Start CN instance (--lm-ip, --trx-ip, --cp-ip, --upf-ip)
-│   ├── stop.sh               # Stop/remove CN instance
+│   ├── start.sh              # Start CN instance (+ auto SCTP DNAT for external gNB)
+│   ├── stop.sh               # Stop/remove CN instance (+ DNAT cleanup)
 │   ├── status.sh             # Instance status
 │   ├── provision.sh          # Subscriber provisioning
-│   └── logs.sh               # Log tailing
+│   ├── logs.sh               # Log tailing
+│   └── sctp_test.py          # SCTP/NGAP connectivity tester
 ├── config/
 │   ├── start-all.sh          # Container entrypoint (starts all 11 NFs)
 │   └── *.yaml                # NF config templates with placeholders
@@ -314,3 +346,4 @@ python3 tests/cnode_mock_server.py --port 9090 [--framing le4|varint|auto]
 - SCTP kernel module (`modprobe sctp`)
 - Two available IP addresses per instance (CP + UPF), must be different
 - Python 3 with PyYAML (`pip install pyyaml`)
+- `pysctp` for SCTP testing (`pip install pysctp`) — optional
