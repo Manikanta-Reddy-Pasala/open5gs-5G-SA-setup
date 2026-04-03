@@ -16,6 +16,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgnutls30 libgcrypt20 libssl3 \
     libidn12 libmongoc-1.0-0 libbson-1.0-0 \
+    libboost-all-dev protobuf-c-compiler libprotobuf-c-dev libprotobuf-dev \
     libsctp1 libmicrohttpd12 \
     libcurl4 libnghttp2-14 \
     libyaml-0-2 libtalloc2 \
