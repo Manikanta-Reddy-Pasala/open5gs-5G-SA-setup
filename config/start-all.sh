@@ -76,21 +76,23 @@ log "  ${TUN_DEV} UP — UE subnet: ${UE_SUBNET}, gw: ${UE_GW}"
 wait_mongo
 
 # ── 2. NRF (must be first — service registry) ───────────────
+# NF logging is handled by each NF's YAML config (logger.file.path).
+# Redirect stdout/stderr to /dev/null to avoid duplicate lines.
 log "Starting NRF (${CP_IP}:7777)..."
-"$BINDIR/open5gs-nrfd" -c "$CFGDIR/nrf.yaml" >> "$LOGDIR/nrf.log" 2>&1 &
+"$BINDIR/open5gs-nrfd" -c "$CFGDIR/nrf.yaml" >/dev/null 2>&1 &
 wait_port "$CP_IP" 7777
 
 # ── 3. All other CP NFs in parallel ─────────────────────────
 log "Starting SCP + UDR + UDM + AUSF + PCF + BSF + NSSF + SMF + AMF..."
-"$BINDIR/open5gs-scpd"  -c "$CFGDIR/scp.yaml"  >> "$LOGDIR/scp.log"  2>&1 &
-"$BINDIR/open5gs-udrd"  -c "$CFGDIR/udr.yaml"  >> "$LOGDIR/udr.log"  2>&1 &
-"$BINDIR/open5gs-udmd"  -c "$CFGDIR/udm.yaml"  >> "$LOGDIR/udm.log"  2>&1 &
-"$BINDIR/open5gs-ausfd" -c "$CFGDIR/ausf.yaml" >> "$LOGDIR/ausf.log" 2>&1 &
-"$BINDIR/open5gs-pcfd"  -c "$CFGDIR/pcf.yaml"  >> "$LOGDIR/pcf.log"  2>&1 &
-"$BINDIR/open5gs-bsfd"  -c "$CFGDIR/bsf.yaml"  >> "$LOGDIR/bsf.log" 2>&1 &
-"$BINDIR/open5gs-nssfd" -c "$CFGDIR/nssf.yaml" >> "$LOGDIR/nssf.log" 2>&1 &
-"$BINDIR/open5gs-smfd"  -c "$CFGDIR/smf.yaml"  >> "$LOGDIR/smf.log"  2>&1 &
-"$BINDIR/open5gs-amfd"  -c "$CFGDIR/amf.yaml"  >> "$LOGDIR/amf.log"  2>&1 &
+"$BINDIR/open5gs-scpd"  -c "$CFGDIR/scp.yaml"  >/dev/null 2>&1 &
+"$BINDIR/open5gs-udrd"  -c "$CFGDIR/udr.yaml"  >/dev/null 2>&1 &
+"$BINDIR/open5gs-udmd"  -c "$CFGDIR/udm.yaml"  >/dev/null 2>&1 &
+"$BINDIR/open5gs-ausfd" -c "$CFGDIR/ausf.yaml" >/dev/null 2>&1 &
+"$BINDIR/open5gs-pcfd"  -c "$CFGDIR/pcf.yaml"  >/dev/null 2>&1 &
+"$BINDIR/open5gs-bsfd"  -c "$CFGDIR/bsf.yaml"  >/dev/null 2>&1 &
+"$BINDIR/open5gs-nssfd" -c "$CFGDIR/nssf.yaml" >/dev/null 2>&1 &
+"$BINDIR/open5gs-smfd"  -c "$CFGDIR/smf.yaml"  >/dev/null 2>&1 &
+"$BINDIR/open5gs-amfd"  -c "$CFGDIR/amf.yaml"  >/dev/null 2>&1 &
 
 wait_port "$CP_IP" 7778   # SCP
 wait_port "$CP_IP" 7786   # UDR
@@ -104,7 +106,7 @@ wait_port "$CP_IP" 7780   # AMF
 
 # ── 4. UPF ──────────────────────────────────────────────────
 log "Starting UPF (${UPF_IP})..."
-"$BINDIR/open5gs-upfd" -c "$CFGDIR/upf.yaml" >> "$LOGDIR/upf.log" 2>&1 &
+"$BINDIR/open5gs-upfd" -c "$CFGDIR/upf.yaml" >/dev/null 2>&1 &
 
 log ""
 log "========================================="
