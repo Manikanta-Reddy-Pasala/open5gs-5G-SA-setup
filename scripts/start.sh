@@ -305,47 +305,6 @@ iptables -C FORWARD -s "${UE_SUBNET}" -j ACCEPT 2>/dev/null || \
 iptables -C FORWARD -d "${UE_SUBNET}" -j ACCEPT 2>/dev/null || \
     iptables -I FORWARD 1 -d "${UE_SUBNET}" -j ACCEPT
 
-# ── Set up SCTP/GTP-U DNAT for external gNB access ───────────
-# Detect public IP on default-route interface (e.g., eth0)
-# and add DNAT rules so real base stations can reach AMF/UPF
-# via the public IP even though NFs bind to internal bridge IPs.
-PUBLIC_IFACE=$(ip route show default 2>/dev/null | awk '{print $5; exit}')
-PUBLIC_IP=$(ip -4 addr show "$PUBLIC_IFACE" 2>/dev/null | awk '/inet / {split($2,a,"/"); print a[1]; exit}')
-
-if [ -n "$PUBLIC_IP" ] && [ "$PUBLIC_IP" != "$CP_IP" ] && [ "$PUBLIC_IP" != "$UPF_IP" ]; then
-    log "Setting up DNAT for external gNB access (${PUBLIC_IP} → ${CP_IP}/${UPF_IP})..."
-
-    # SCTP DNAT: public_ip:38412 → cp_ip:38412 (NGAP/N2)
-    iptables -t nat -C PREROUTING -i "$PUBLIC_IFACE" -p sctp --dport "${NGAP_PORT}" \
-        -j DNAT --to-destination "${CP_IP}:${NGAP_PORT}" 2>/dev/null || \
-        iptables -t nat -A PREROUTING -i "$PUBLIC_IFACE" -p sctp --dport "${NGAP_PORT}" \
-            -j DNAT --to-destination "${CP_IP}:${NGAP_PORT}"
-    ok "SCTP DNAT: ${PUBLIC_IP}:${NGAP_PORT} → ${CP_IP}:${NGAP_PORT}"
-
-    # GTP-U DNAT: public_ip:2152 → upf_ip:2152 (N3)
-    iptables -t nat -C PREROUTING -i "$PUBLIC_IFACE" -p udp --dport "${GTPU_PORT}" \
-        -j DNAT --to-destination "${UPF_IP}:${GTPU_PORT}" 2>/dev/null || \
-        iptables -t nat -A PREROUTING -i "$PUBLIC_IFACE" -p udp --dport "${GTPU_PORT}" \
-            -j DNAT --to-destination "${UPF_IP}:${GTPU_PORT}"
-    ok "GTP-U DNAT: ${PUBLIC_IP}:${GTPU_PORT} → ${UPF_IP}:${GTPU_PORT}"
-
-    # FORWARD rules for DNATed traffic
-    iptables -C FORWARD -p sctp --dport "${NGAP_PORT}" -d "${CP_IP}" -j ACCEPT 2>/dev/null || \
-        iptables -I FORWARD 1 -p sctp --dport "${NGAP_PORT}" -d "${CP_IP}" -j ACCEPT
-    iptables -C FORWARD -p udp --dport "${GTPU_PORT}" -d "${UPF_IP}" -j ACCEPT 2>/dev/null || \
-        iptables -I FORWARD 1 -p udp --dport "${GTPU_PORT}" -d "${UPF_IP}" -j ACCEPT
-
-    # OUTPUT DNAT for local SCTP testing (e.g., sctp_test.py from same host)
-    iptables -t nat -C OUTPUT -p sctp -d "${PUBLIC_IP}" --dport "${NGAP_PORT}" \
-        -j DNAT --to-destination "${CP_IP}:${NGAP_PORT}" 2>/dev/null || \
-        iptables -t nat -A OUTPUT -p sctp -d "${PUBLIC_IP}" --dport "${NGAP_PORT}" \
-            -j DNAT --to-destination "${CP_IP}:${NGAP_PORT}"
-
-    ok "External gNB access ready via ${PUBLIC_IP}"
-else
-    log "CP/UPF IPs on public interface — no DNAT needed"
-fi
-
 # ── Save instance metadata ────────────────────────────────────
 cat > "${INST_DIR}/metadata.env" <<METAEOF
 LM_IP=${LM_IP}
@@ -369,8 +328,6 @@ SD=${SD}
 DNN=${DNN}
 DB_NAME=${DB_NAME}
 TUN_DEV=${TUN_DEV}
-PUBLIC_IP=${PUBLIC_IP:-}
-PUBLIC_IFACE=${PUBLIC_IFACE:-}
 METAEOF
 
 hdr ""
@@ -378,14 +335,9 @@ hdr "  ========================================="
 hdr "  CN Instance ${INSTANCE_NAME} is RUNNING"
 hdr "  ========================================="
 hdr ""
-hdr "  ── gNB connection endpoints ──"
-if [ -n "${PUBLIC_IP:-}" ] && [ "$PUBLIC_IP" != "$CP_IP" ]; then
-    log "    External gNB:  ${PUBLIC_IP}:${NGAP_PORT} (SCTP) / ${PUBLIC_IP}:${GTPU_PORT} (GTP-U)"
-    log "    Internal gNB:  ${CP_IP}:${NGAP_PORT} (SCTP) / ${UPF_IP}:${GTPU_PORT} (GTP-U)"
-else
-    log "    NGAP/SCTP: ${CP_IP}:${NGAP_PORT}"
-    log "    GTP-U/UDP: ${UPF_IP}:${GTPU_PORT}"
-fi
+hdr "  ── gNB connects to (IPs on ${PARENT_IFACE}) ──"
+log "    NGAP/SCTP: ${CP_IP}:${NGAP_PORT}"
+log "    GTP-U/UDP: ${UPF_IP}:${GTPU_PORT}"
 hdr ""
 log "  Container: ${CONTAINER_NAME}"
 log "  PLMN:   ${PLMN_DISPLAY}  TAC=${TAC}"

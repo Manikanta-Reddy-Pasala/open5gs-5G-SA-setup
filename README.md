@@ -32,24 +32,10 @@ A multi-instance 5G Standalone (SA) core network built from source using [open5G
   │                                                              │
   └──────────────────────────────────────────────────────────────┘
 
-  gNB connects directly to secondary IPs (local) or via public IP DNAT (remote):
-    Local  gNB ──► 10.100.0.21:38412 (NGAP)  +  10.100.0.31:2152 (GTP-U)
-    Remote gNB ──► <PUBLIC_IP>:38412 (SCTP DNAT → CP IP) + <PUBLIC_IP>:2152 (UDP DNAT → UPF IP)
+  gNB connects directly to secondary IPs:
+    TRX1 gNB ──► 10.100.0.21:38412 (NGAP)  +  10.100.0.31:2152 (GTP-U)
+    TRX2 gNB ──► 10.100.0.22:38412          +  10.100.0.32:2152
 ```
-
-### External gNB access (SCTP DNAT)
-
-When CP/UPF IPs are on an internal bridge (not the public interface), `start.sh` **automatically** detects the public IP and adds iptables DNAT rules:
-
-```
-Real Base Station (remote)
-    │
-    ▼  SCTP :38412
-<PUBLIC_IP> ──DNAT──► <CP_IP>:38412  (AMF/NGAP)
-<PUBLIC_IP> ──DNAT──► <UPF_IP>:2152  (UPF/GTP-U)
-```
-
-These rules are cleaned up automatically by `stop.sh --rm`.
 
 ### IP roles
 
@@ -291,8 +277,8 @@ open5gs-5G-SA-setup/
 │   ├── env.sh                # Shared env vars and helpers
 │   ├── build.sh              # Source compilation + image build
 │   ├── docker.sh             # Runtime image build (standalone)
-│   ├── start.sh              # Start CN instance (+ auto SCTP DNAT for external gNB)
-│   ├── stop.sh               # Stop/remove CN instance (+ DNAT cleanup)
+│   ├── start.sh              # Start CN instance (--lm-ip, --trx-ip, --cp-ip, --upf-ip)
+│   ├── stop.sh               # Stop/remove CN instance
 │   ├── status.sh             # Instance status
 │   ├── provision.sh          # Subscriber provisioning
 │   ├── logs.sh               # Log tailing
